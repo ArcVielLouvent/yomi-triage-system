@@ -1,77 +1,118 @@
 import os
 import platform
 import signal
+import shutil
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge
-# Purpose: Hardware Abstraction Layer. Detects OS and routes execution safely.
+# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v2.0)
+# Purpose: Hardware Abstraction Layer. Detects OS and specific SIFT toolchains
+#          to route execution safely (Real Execution vs Vibe-Coding Mock Mode).
 # ==============================================================================
+
 
 class OSBridge:
     def __init__(self):
         self.os_type = platform.system()
+        self.environment = "UNKNOWN"
         self._initialize_bridge()
 
     def _initialize_bridge(self):
         print(f"\n[YOMI-BRIDGE] Initializing Hardware Abstraction Layer...")
-        print(f"[YOMI-BRIDGE] Sensor Detects OS: {self.os_type}")
-        
+        print(f"[YOMI-BRIDGE] Base OS Detected: {self.os_type}")
+
         if self.os_type == "Windows":
-            print("[YOMI-BRIDGE] Windows Development Mode Active. Loading ETW Simulation Stubs...")
+            self.environment = "WINDOWS_MOCK"
+            print(
+                "[YOMI-BRIDGE] Windows Development Environment. Loading ETW Simulation Stubs..."
+            )
+
         elif self.os_type == "Linux":
-            print("[YOMI-BRIDGE] Linux SIFT Workstation Active. eBPF & Kernel Hooks Armed.")
+            # Check if this is an actual SIFT workstation by looking for Volatility
+            if shutil.which("vol.py") or shutil.which("vol"):
+                self.environment = "SIFT_LINUX"
+                print(
+                    "[YOMI-BRIDGE] SIFT Workstation Confirmed. eBPF & Kernel Hooks ARMED."
+                )
+            else:
+                self.environment = "CODESPACES_LINUX"
+                print(
+                    "[YOMI-BRIDGE] Standard Linux (Codespaces) Detected. SIFT tools not found."
+                )
+                print("[YOMI-BRIDGE] Activating Linux Vibe-Coding Mock Mode...")
+
         else:
-            print(f"[YOMI-BRIDGE] Unknown OS ({self.os_type}). Falling back to simulation mode.")
+            self.environment = "UNKNOWN_MOCK"
+            print(
+                f"[YOMI-BRIDGE] Unknown OS ({self.os_type}). Falling back to simulation mode."
+            )
+
+    def is_mock_mode(self) -> bool:
+        """Returns True if Yomi should simulate tool outputs."""
+        return self.environment != "SIFT_LINUX"
 
     def cryogenic_freeze(self, pid: int) -> dict:
         """
         Freezes a process in memory without terminating it.
-        Linux: SIGSTOP. Windows: Simulated NtSuspendProcess.
         """
         try:
             pid = int(pid)
-            if self.os_type == "Linux":
-                # Absolute Execution for SIFT (Real Kernel Signal)
+            if (
+                self.environment == "SIFT_LINUX"
+                or self.environment == "CODESPACES_LINUX"
+            ):
+                # Real Linux execution (SIGSTOP works on both SIFT and Codespaces)
                 os.kill(pid, signal.SIGSTOP)
                 return {
-                    "status": "SUCCESS", 
-                    "action": "FROZEN", 
-                    "pid": pid, 
-                    "os": "Linux", 
-                    "method": "SIGSTOP"
-                }
-            elif self.os_type == "Windows":
-                # Safe Simulation for Windows Development (Prevents laptop crash)
-                return {
-                    "status": "SUCCESS", 
-                    "action": "FROZEN", 
-                    "pid": pid, 
-                    "os": "Windows", 
-                    "method": "Simulated ETW / NtSuspendProcess"
+                    "status": "SUCCESS",
+                    "action": "FROZEN",
+                    "pid": pid,
+                    "os": "Linux",
+                    "method": "SIGSTOP",
                 }
             else:
-                return {"status": "ERROR", "reason": "Unsupported OS for Cryogenic Freeze"}
-                
+                # Windows / Unknown Simulation
+                return {
+                    "status": "SUCCESS",
+                    "action": "FROZEN",
+                    "pid": pid,
+                    "os": self.os_type,
+                    "method": "Simulated NtSuspendProcess",
+                }
         except ProcessLookupError:
             return {"status": "ERROR", "reason": f"PID {pid} not found."}
         except PermissionError:
-            return {"status": "ERROR", "reason": f"Permission denied to freeze PID {pid}. Root/Admin required."}
+            return {
+                "status": "ERROR",
+                "reason": f"Permission denied to freeze PID {pid}. Root/Admin required.",
+            }
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
 
     def thaw_process(self, pid: int) -> dict:
         """
-        Resumes a frozen process if Triad Council deems it a False Positive.
+        Resumes a frozen process (SIGCONT).
         """
         try:
             pid = int(pid)
-            if self.os_type == "Linux":
+            if (
+                self.environment == "SIFT_LINUX"
+                or self.environment == "CODESPACES_LINUX"
+            ):
                 os.kill(pid, signal.SIGCONT)
-                return {"status": "SUCCESS", "action": "THAWED", "pid": pid, "os": "Linux", "method": "SIGCONT"}
-            elif self.os_type == "Windows":
-                return {"status": "SUCCESS", "action": "THAWED", "pid": pid, "os": "Windows", "method": "Simulated ResumeThread"}
+                return {
+                    "status": "SUCCESS",
+                    "action": "THAWED",
+                    "pid": pid,
+                    "os": "Linux",
+                    "method": "SIGCONT",
+                }
             else:
-                return {"status": "ERROR", "reason": "Unsupported OS for Thaw"}
+                return {
+                    "status": "SUCCESS",
+                    "action": "THAWED",
+                    "pid": pid,
+                    "os": self.os_type,
+                    "method": "Simulated ResumeThread",
+                }
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
-
