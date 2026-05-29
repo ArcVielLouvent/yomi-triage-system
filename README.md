@@ -21,7 +21,7 @@ To meet the SANS requirements for autonomous execution, evidence integrity, and 
 The following diagram illustrates how the 5 Evolutions of Yomi interact, separating the cognitive layer from the execution layer.
 
 ```mermaid
-graph TD
+graph TD;
     subgraph The War Room Cognitive Layer
         A[Omni-Library Threat Intel] --> C
         B[Epistemic Uncertainty Engine] --> C
@@ -123,7 +123,7 @@ Safe, non-destructive neutralization protocols.
 This sequence demonstrates Yomi's response to an autonomous AI threat (e.g., Anthropic GTG-1002 scenario).
 
 ```mermaid
-sequenceDiagram
+sequenceDiagram;
     participant Attacker
     participant OS SIFT
     participant eBPF Swarm
@@ -147,7 +147,7 @@ sequenceDiagram
 How Yomi eliminates hallucinations before taking action.
 
 ```mermaid
-flowchart LR
+flowchart LR;
     A[Suspicious Artifact Found] --> B(Red Agent: Hacker Persona)
     A --> C(Blue Agent: Defender Persona)
     B -->|Argues why it is safe/evasive| D{The Judge Agent}
