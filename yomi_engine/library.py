@@ -1,85 +1,103 @@
 import os
 import json
+import time
+import threading
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - The Omni-Library
-# Purpose: Localized Threat Intelligence & CVE Retrieval System (RAG Backend).
+# YOMI TRIAGE SYSTEM: Engine Module - The Omni-Library (v2.0)
+# Purpose: Localized Threat Intelligence & CVE Retrieval System.
+#          Features a background daemon for continuous asynchronous scraping.
 # ==============================================================================
+
 
 class OmniLibrary:
     def __init__(self):
         self.data_dir = "/workspaces/yomi-triage-system/yomi_data"
         self.db_file = os.path.join(self.data_dir, "cve_database.json")
-        self._initialize_database()
 
-    def _initialize_database(self):
-        """Creates a high-speed local vulnerability database if it doesn't exist."""
-        if not os.path.exists(self.db_file):
-            # Pre-loading with critical SANS-level vulnerabilities for Hackathon Demo
-            initial_data = [
-                {
-                    "cve_id": "CVE-2024-3094",
-                    "target": "xz-utils",
-                    "description": "Malicious backdoor introduced in xz compression library allowing unauthenticated remote code execution.",
-                    "indicators": ["liblzma", "sshd high CPU", "hidden sshd process"],
-                    "remediation": "Downgrade xz-utils to 5.4.6 or earlier. Kill malicious sshd spawned processes."
-                },
-                {
-                    "cve_id": "CVE-2023-46805",
-                    "target": "Ivanti VPN",
-                    "description": "Authentication bypass vulnerability in the web component of Ivanti ICS allowing remote attackers to access restricted resources.",
-                    "indicators": ["curl requests to /api/v1/totp", "unrecognized python scripts in /tmp"],
-                    "remediation": "Apply vendor mitigation XML and factory reset if compromised."
-                },
-                {
-                    "cve_id": "MAL-RANSOM-01",
-                    "target": "Windows File System",
-                    "description": "Generic behavior for ransomware encrypting user directories.",
-                    "indicators": ["vssadmin.exe Delete Shadows", "high disk I/O on personal folders", ".enc file extensions"],
-                    "remediation": "Isolate host from network immediately. Terminate encrypting PID."
-                }
-            ]
-            with open(self.db_file, 'w') as f:
-                json.dump(initial_data, f, indent=4)
-            print("[YOMI-LIBRARY] Initialized Local Threat Database.")
+        # Thread Lock ensures data integrity if AI and Daemon access DB simultaneously
+        self.database_lock = threading.Lock()
+        self.database = []
 
-    def analyze_artifact(self, artifact_name, context_hints=[]):
+        self._load_database()
+        self._start_continuous_scraping()
+
+    def _load_database(self):
+        """Loads the CVE database from disk safely into memory."""
+        with self.database_lock:
+            if os.path.exists(self.db_file):
+                try:
+                    with open(self.db_file, "r") as f:
+                        self.database = json.load(f)
+                except json.JSONDecodeError:
+                    self.database = []
+
+    def _save_database(self):
+        """Saves the in-memory database back to disk."""
+        with self.database_lock:
+            with open(self.db_file, "w") as f:
+                json.dump(self.database, f, indent=4)
+
+    def _scraping_worker(self):
         """
-        Simulates a RAG retrieval process by cross-referencing artifacts
-        with known threat indicators.
+        Background daemon that periodically fetches new threat intelligence.
+        Operates asynchronously without blocking the main triage execution.
         """
-        with open(self.db_file, 'r') as f:
-            database = json.load(f)
+        # In a real environment, this would use requests.get() to pull from MITRE/NVD APIs.
+        # For this prototype, we simulate the autonomous discovery of a zero-day threat.
+        time.sleep(5)  # Delay before first background scrape
 
+        while True:
+            # Generate a simulated zero-day threat payload
+            new_threat = {
+                "cve_id": f"CVE-ZERO-DAY-{int(time.time())}",
+                "target": "Unknown Autonomous Agent",
+                "description": "Background scraping detected a newly published zero-day signature.",
+                "indicators": ["dynamic_memory_hook", "shadow_net_evasion"],
+                "remediation": "Engage Cryogenic Freeze immediately.",
+            }
+
+            with self.database_lock:
+                # Only add if it's not bloating the DB during testing (keep it under 50 entries)
+                if len(self.database) < 50:
+                    self.database.append(new_threat)
+
+            self._save_database()
+
+            # Polling interval: Waits 15 seconds before scraping the internet again
+            time.sleep(15)
+
+    def _start_continuous_scraping(self):
+        """Spins up the scraping daemon in a separate background thread."""
+        scraper_thread = threading.Thread(target=self._scraping_worker, daemon=True)
+        scraper_thread.start()
+
+    def analyze_artifact(self, artifact_name: str, context_hints: list) -> dict:
+        """
+        Cross-references suspicious artifacts with the live threat database.
+        Thread-safe read operation.
+        """
         matches = []
         search_terms = [artifact_name.lower()] + [h.lower() for h in context_hints]
 
-        for entry in database:
-            # Check if any search term matches the target, description, or indicators
-            combined_text = f"{entry['target']} {entry['description']} {' '.join(entry['indicators'])}".lower()
-            
-            if any(term in combined_text for term in search_terms):
-                matches.append(entry)
+        with self.database_lock:
+            for entry in self.database:
+                combined_text = f"{entry.get('target', '')} {entry.get('description', '')} {' '.join(entry.get('indicators', []))}".lower()
+
+                if any(term in combined_text for term in search_terms):
+                    matches.append(entry)
 
         if matches:
             return {
                 "status": "THREAT_FOUND",
-                "matches": matches,
-                "analysis": f"Found {len(matches)} potential vulnerabilities related to the artifact."
-            }
-        else:
-            return {
-                "status": "CLEAN_OR_UNKNOWN",
-                "analysis": "No immediate threats found in the Omni-Library for this artifact."
+                "matches": matches[
+                    :3
+                ],  # Return top 3 matches to prevent LLM context overload
+                "analysis": f"Found {len(matches)} potential vulnerabilities related to the artifact.",
             }
 
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK
-# ==============================================================================
-if __name__ == "__main__":
-    library = OmniLibrary()
-    print("\n[Testing Omni-Library Retrieval]")
-    
-    # Simulate the AI asking about 'xz-utils'
-    result = library.analyze_artifact("xz-utils", ["liblzma"])
-    print(json.dumps(result, indent=2))
+        return {
+            "status": "CLEAN_OR_UNKNOWN",
+            "analysis": "No immediate threats found in the Omni-Library for this artifact.",
+        }
+
