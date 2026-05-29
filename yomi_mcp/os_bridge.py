@@ -75,12 +75,3 @@ class OSBridge:
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
 
-# =============================================================================
-# DEVELOPMENT TESTING BLOCK
-# =============================================================================
-if __name__ == "__main__":
-    # Test script locally without triggering the whole AI
-    bridge = OSBridge()
-    print("\n--- Testing Cryogenic Freeze (Simulation on Windows, Real on Linux) ---")
-    test_result = bridge.cryogenic_freeze(9999) # Using dummy PID
-    print(test_result)
