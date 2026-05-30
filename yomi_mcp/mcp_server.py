@@ -72,11 +72,19 @@ class YomiMCPServer:
 
         # Route to the SiftArsenal type-safe wrappers
         if tool_name == "run_volatility_netscan":
-            result = self.arsenal.run_volatility_netscan(
-                arguments.get("memory_dump_path")
-            )
+            memory_dump_path = arguments.get("memory_dump_path")
+            if not isinstance(memory_dump_path, str) or not memory_dump_path:
+                return json.dumps(
+                    {"error": "Argument 'memory_dump_path' is required and must be a non-empty string."}
+                )
+            result = self.arsenal.run_volatility_netscan(memory_dump_path)
         elif tool_name == "run_plaso_timeline":
-            result = self.arsenal.run_plaso_timeline(arguments.get("target_drive_path"))
+            target_drive_path = arguments.get("target_drive_path")
+            if not isinstance(target_drive_path, str) or not target_drive_path:
+                return json.dumps(
+                    {"error": "Argument 'target_drive_path' is required and must be a non-empty string."}
+                )
+            result = self.arsenal.run_plaso_timeline(target_drive_path)
         else:
             result = {"status": "ERROR", "reason": "Implementation pending."}
 

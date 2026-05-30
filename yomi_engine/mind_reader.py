@@ -8,7 +8,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.sift_toolkit import SiftArsenal
-from yomi_core.router import OpenClawGateway
 from yomi_engine.library import OmniLibrary
 
 # ==============================================================================
@@ -23,7 +22,6 @@ class MindReaderDecompiler:
     def __init__(self):
         self.audit = ImmutableStamp()
         self.arsenal = SiftArsenal()
-        self.openclaw = OpenClawGateway()
         self.library = OmniLibrary()
 
     def decompile_and_profile(self, binary_path: str, target_pid: int) -> dict:

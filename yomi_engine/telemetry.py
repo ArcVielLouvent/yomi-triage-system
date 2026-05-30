@@ -1,6 +1,7 @@
 import time
 import json
 import os
+import threading
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - Telemetry & Benchmarking
@@ -12,6 +13,7 @@ import os
 class TelemetryEngine:
     def __init__(self):
         self.active_incidents = {}
+        self._lock = threading.Lock()
         self.benchmark_log = os.path.abspath(
             os.path.join(
                 os.path.dirname(__file__),
@@ -59,8 +61,9 @@ class TelemetryEngine:
         return report
 
     def _log_benchmark(self, report: dict):
-        with open(self.benchmark_log, "a") as f:
-            f.write(json.dumps(report) + "\n")
+        with self._lock:
+            with open(self.benchmark_log, "a") as f:
+                f.write(json.dumps(report) + "\n")
 
     def _print_holographic_report(self, report: dict):
         print("\n" + "=" * 60)

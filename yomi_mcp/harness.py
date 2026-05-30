@@ -29,7 +29,7 @@ class YomiHarness:
         if raw_pid is not None:
             try:
                 target_pid = int(raw_pid)
-            except ValueError:
+            except (ValueError, TypeError):
                 return {
                     "is_vetoed": True,
                     "reason": f"VETO: target_pid '{raw_pid}' is not a valid integer.",

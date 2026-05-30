@@ -120,8 +120,11 @@ class GhostProtocol:
                 # Windows equivalent (Suspends current thread/console)
                 pass
         except Exception:
-            # Absolute fallback: Kernel Panic Trigger (Requires Root)
-            os.system("echo c > /proc/sysrq-trigger")
+            # Absolute fallback removed: Kernel panic trigger is too dangerous for safe operation.
+            return {
+                "status": "ERROR",
+                "reason": "Dead-Man's Hand fallback is disabled to avoid catastrophic system impact.",
+            }
 
 
 # ==============================================================================

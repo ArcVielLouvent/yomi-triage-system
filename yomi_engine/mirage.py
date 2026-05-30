@@ -74,7 +74,9 @@ sysadmin:$6$a8B9z$MOCK.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::"""
             f.write(fake_shadow_content)
 
         # 2. Fake SSH Keys (Bait for lateral movement/worming)
-        fake_ssh_key = "-----BEGIN OPENSSH PRIVATE KEY-----\\nb3BlbnNzaC1rZXktdjEAAAA...[MOCK_KEY]...\\n-----END OPENSSH PRIVATE KEY-----"
+        fake_ssh_key = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        fake_ssh_key += "b3BlbnNzaC1rZXktdjEAAAA...[MOCK_KEY]...\n"
+        fake_ssh_key += "-----END OPENSSH PRIVATE KEY-----\n"
         with open(os.path.join(linux_mirage_path, "root", ".ssh", "id_rsa"), "w") as f:
             f.write(fake_ssh_key)
 
