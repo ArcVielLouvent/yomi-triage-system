@@ -96,3 +96,72 @@ class SiftArsenal:
 
         cmd = ["r2", "-q", "-c", "iz", binary_path]
         return self._run_subprocess(cmd, "radare2")
+
+    # -------------------------------------------------------------------------
+    # 3. PLASO WRAPPER (Timeline Forensics)
+    # -------------------------------------------------------------------------
+    def run_plaso_timeline(self, target_drive_path: str) -> dict:
+        """Type-Safe execution of Log2Timeline to build temporal super-timelines."""
+        if self.os_bridge.is_mock_mode():
+            print(
+                "[YOMI-ARSENAL] [MOCK MODE] Simulating Plaso Log2Timeline generation..."
+            )
+            return {
+                "status": "MOCK_SUCCESS",
+                "tool": "plaso",
+                "output": "2026-05-30T12:00:01Z,EVTX,Security,4624,Logon Success,User: Hacker",
+            }
+
+        # Safe array command, prevents shell injection
+        cmd = [
+            "log2timeline.py",
+            "--parsers",
+            "win7",
+            "/tmp/timeline.plaso",
+            target_drive_path,
+        ]
+        return self._run_subprocess(cmd, "plaso")
+
+    # -------------------------------------------------------------------------
+    # 4. THE SLEUTH KIT WRAPPER (Disk & Hidden Artifacts)
+    # -------------------------------------------------------------------------
+    def run_tsk_fls(self, image_path: str) -> dict:
+        """Type-Safe execution of TSK 'fls' to recover deleted files/MFT entries."""
+        if self.os_bridge.is_mock_mode():
+            print("[YOMI-ARSENAL] [MOCK MODE] Simulating TSK deleted file recovery...")
+            return {
+                "status": "MOCK_SUCCESS",
+                "tool": "tsk",
+                "output": "d/d * 1234: /Windows/System32/config/SAM\nr/r * 9999: /Temp/mimikatz.exe",
+            }
+
+        cmd = ["fls", "-r", "-p", image_path]
+        return self._run_subprocess(cmd, "tsk")
+
+    # -------------------------------------------------------------------------
+    # 5. TSHARK WRAPPER (Network PCAP Analysis)
+    # -------------------------------------------------------------------------
+    def run_tshark_pcap(self, pcap_path: str) -> dict:
+        """Type-Safe execution of TShark to detect C2 Beaconing in network captures."""
+        if self.os_bridge.is_mock_mode():
+            print("[YOMI-ARSENAL] [MOCK MODE] Simulating TShark PCAP Analysis...")
+            return {
+                "status": "MOCK_SUCCESS",
+                "tool": "tshark",
+                "output": "10.0.0.5 -> 103.45.0.0 HTTP GET /payload.bin\n10.0.0.5 -> 8.8.8.8 DNS Standard query A c2-server.evil.com",
+            }
+
+        cmd = [
+            "tshark",
+            "-r",
+            pcap_path,
+            "-Y",
+            "http or dns",
+            "-T",
+            "fields",
+            "-e",
+            "ip.src",
+            "-e",
+            "ip.dst",
+        ]
+        return self._run_subprocess(cmd, "tshark")
