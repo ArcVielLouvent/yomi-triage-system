@@ -30,5 +30,25 @@
             ".enc file extensions"
         ],
         "remediation": "Isolate host from network immediately. Terminate encrypting PID."
+    },
+    {
+        "cve_id": "CVE-ZERO-DAY-1780070000",
+        "target": "Unknown Autonomous Agent",
+        "description": "Background scraping detected a newly published zero-day signature.",
+        "indicators": [
+            "dynamic_memory_hook",
+            "shadow_net_evasion"
+        ],
+        "remediation": "Engage Cryogenic Freeze immediately."
+    },
+    {
+        "cve_id": "CVE-ZERO-DAY-1780111324",
+        "target": "Unknown Autonomous Agent",
+        "description": "Background scraping detected a newly published zero-day signature.",
+        "indicators": [
+            "dynamic_memory_hook",
+            "shadow_net_evasion"
+        ],
+        "remediation": "Engage Cryogenic Freeze immediately."
     }
 ]

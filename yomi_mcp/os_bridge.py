@@ -38,7 +38,7 @@ class OSBridge:
                 print(
                     "[YOMI-BRIDGE] Standard Linux (Codespaces) Detected. SIFT tools not found."
                 )
-                print("[YOMI-BRIDGE] Activating Linux Vibe-Coding Mock Mode...")
+                print("[YOMI-BRIDGE] Activating Linux Mock Mode...")
 
         else:
             self.environment = "UNKNOWN_MOCK"
