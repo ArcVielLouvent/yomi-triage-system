@@ -78,12 +78,7 @@ class SentinelDaemon:
 
         # 4. Route context through the Circuit Breaker (OpenClaw)
         print("[SENTINEL] Routing forensic context to OpenClaw LLM Gateway...")
-        ai_json_payload = self.openclaw.generate_intent(forensic_context)
-
-        # 5. Evaluate the LLM's JSON Intent via the Triad Council & MCP Vault
-        harness_result = self.router.evaluate_intent(ai_json_payload)
-        if harness_result.get("status") in ["VETOED", "REJECTED", "ERROR", "SELF_CORRECTION_REQUIRED"]:
-            print("[SENTINEL] [WARNING] AI intent did not pass gating controls. No dangerous action executed.")
+        self.router.execute_autonomous_triage(forensic_context)
 
     def start(self):
         """

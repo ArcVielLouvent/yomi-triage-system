@@ -1,88 +1,98 @@
 import os
 import json
-import fcntl
+import time
 import hashlib
-from datetime import datetime, timezone
+import threading
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Core Module - Immutable Stamp
-# Purpose: Cryptographically secure, append-only audit trail for SANS compliance.
+# YOMI TRIAGE SYSTEM: Audit Module - The Immutable Stamp (v3.0)
+# Purpose: Cryptographic, tamper-evident ledger for SANS Evidence Integrity.
+#          Implements strict hash-chaining and granular tool-call logging.
 # ==============================================================================
+
 
 class ImmutableStamp:
-    """
-    Maintains a cryptographic chain of custody for all AI actions within YTS.
-    """
-    def __init__(self):
-        self.log_dir = "/workspaces/yomi-triage-system/yomi_data"
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        # Singleton pattern ensures all modules write to the exact same hash-chain
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(ImmutableStamp, cls).__new__(cls)
+                cls._instance._initialize()
+            return cls._instance
+
+    def _initialize(self):
+        self.log_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "yomi_data", "audit_logs")
+        )
         os.makedirs(self.log_dir, exist_ok=True)
-        
-        self.log_file = os.path.join(self.log_dir, "yomi_chain_of_custody.jsonl")
+        self.ledger_file = os.path.join(self.log_dir, "cryptographic_ledger.jsonl")
         self.last_hash = self._get_last_hash()
 
-    def _ensure_log_exists(self):
-        if not os.path.exists(self.log_file):
-            with open(self.log_file, 'a', encoding='utf-8'):
-                pass
-            os.chmod(self.log_file, 0o600)
-
-    def _get_last_hash(self):
-        """Retrieves the hash of the last log entry to maintain the chain."""
-        self._ensure_log_exists()
+    def _get_last_hash(self) -> str:
+        """Reads the hash of the last entry to maintain the cryptographic chain."""
+        genesis_hash = hashlib.sha256(b"YOMI_GENESIS_BLOCK_SANS_FIND_EVIL").hexdigest()
+        if not os.path.exists(self.ledger_file):
+            return genesis_hash
         try:
-            with open(self.log_file, 'r', encoding='utf-8') as f:
-                fcntl.flock(f, fcntl.LOCK_SH)
+            with open(self.ledger_file, "r") as f:
                 lines = f.readlines()
-                fcntl.flock(f, fcntl.LOCK_UN)
                 if lines:
-                    last_entry = json.loads(lines[-1])
-                    return last_entry.get("hash", "")
+                    last_entry = json.loads(lines[-1].strip())
+                    return last_entry.get("hash", genesis_hash)
         except Exception:
             pass
-        return "0" * 64
+        return genesis_hash
 
-    def record_action(self, agent_name, action_type, description, raw_command=""):
+    def record_action(
+        self,
+        agent_name: str,
+        action_type: str,
+        description: str,
+        raw_command: str = "N/A",
+        tool_args: dict = None,
+    ) -> str:
         """
-        Records an agent's action with a UTC timestamp and SHA-256 hash.
+        Records a granular forensic event with a cryptographic signature linking it to the previous event.
+        Secures the file permissions immediately after writing.
         """
-        timestamp = datetime.now(timezone.utc).isoformat()
-        
-        log_entry = {
-            "timestamp": timestamp,
-            "agent": agent_name,
-            "action_type": action_type, # e.g., 'EXECUTE', 'ANALYZE', 'REMEDIATE'
-            "description": description,
-            "raw_command": raw_command,
-            "previous_hash": self.last_hash
-        }
-        
-        log_string = json.dumps(log_entry, sort_keys=True)
-        current_hash = hashlib.sha256(log_string.encode('utf-8')).hexdigest()
-        
-        log_entry["hash"] = current_hash
-        self.last_hash = current_hash
+        with self._lock:  # Thread-safe writing for parallel Swarm agents
+            timestamp = time.time()
 
-        self._ensure_log_exists()
-        with open(self.log_file, 'a', encoding='utf-8') as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps(log_entry) + '\n')
-            f.flush()
-            os.fsync(f.fileno())
-            fcntl.flock(f, fcntl.LOCK_UN)
+            # Granular SANS Audit Structure
+            entry = {
+                "timestamp": timestamp,
+                "human_readable_time": time.ctime(timestamp),
+                "agent": agent_name,
+                "action": action_type,
+                "description": description,
+                "raw_command": raw_command,
+                "tool_arguments": tool_args or {},
+                "previous_hash": self.last_hash,
+            }
 
-        # Terminal feedback (Will be replaced by TUI later)
-        print(f"[YOMI-AUDIT] Sealed: {action_type} by {agent_name} | Hash: {current_hash[:8]}...")
-        return current_hash
+            # Create deterministic string for hashing (sort_keys ensures consistent JSON stringification)
+            entry_string = json.dumps(entry, sort_keys=True)
+            new_hash = hashlib.sha256(entry_string.encode("utf-8")).hexdigest()
 
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK
-# ==============================================================================
-if __name__ == "__main__":
-    print("Initializing Yomi Immutable Stamp...\n")
-    audit = ImmutableStamp()
-    
-    # Simulating AI actions
-    audit.record_action("Swarm-Network", "SCAN", "Scanning active ports in memory dump", "vol.py -f dump.raw netscan")
-    audit.record_action("Omni-Library", "MATCH", "Found vulnerability match for CVE-2023-1234", "")
-    
-    print("\nAudit trail successfully updated. Check yomi_data/yomi_chain_of_custody.jsonl")
+            # Append the new hash to the entry
+            entry["hash"] = new_hash
+            self.last_hash = new_hash
+
+            # Atomic append to ledger
+            with open(self.ledger_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+
+            # Anti-Spoliation: Restrict file permissions (Read/Write for owner only, no execution)
+            try:
+                os.chmod(self.ledger_file, 0o600)
+            except OSError:
+                pass  # Silently pass on Windows environments where chmod 0600 might behave differently
+
+            # Print minimal output to terminal for visual feedback
+            print(
+                f"[YOMI-AUDIT] Sealed: {action_type} by {agent_name} | Hash: {new_hash[:8]}..."
+            )
+            return new_hash

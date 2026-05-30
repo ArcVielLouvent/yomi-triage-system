@@ -60,35 +60,32 @@ class ShadowNetProtocol:
 
     def _monitor_syscalls(self, target_pid: int):
         """
-        The actual micro-hook logic.
-        In SIFT Linux, this wraps `strace` or `ptrace`.
-        In Codespaces/Windows, it simulates anomaly detection.
+        The actual micro-hook logic using the eBPF Sentinel.
         """
         print(
-            f"[YOMI-SHADOW] Hook attached to PID {target_pid}. Listening for malicious intent..."
+            f"[YOMI-SHADOW] Hook attached to PID {target_pid}. Delegating to eBPF Sentinel..."
         )
 
-        # Simulate a surveillance period (In reality, this listens continuously until an event triggers)
-        time.sleep(3)
+        # IMPORT eBPF Sentinel dynamically to avoid circular dependencies
+        from yomi_engine.ebpf_sensor import eBPFSentinel
 
-        # 4. The Trap Springs
-        if self.os_bridge.is_mock_mode():
+        ebpf = eBPFSentinel()
+        ebpf.arm_sensor()
+
+        # eBPF listens for 3 seconds. If it catches the PID doing something bad, it returns True.
+        is_malicious = ebpf.monitor_pid(target_pid, duration_sec=3)
+
+        if is_malicious:
             print(
-                f"\n[YOMI-SHADOW] [BLOOD RED] MOCK ALERT: PID {target_pid} attempted unauthorized access to SAM/shadow hive!"
+                f"\n[YOMI-SHADOW] [BLOOD RED] eBPF CONFIRMATION: Malicious lateral movement verified on PID {target_pid}."
             )
             self._trigger_zero_doubt_freeze(target_pid)
         else:
-            # SIFT Real Execution: Intercepting actual syscalls (e.g., connect, execve, openat)
             print(
-                f"[YOMI-SHADOW] [SIFT MODE] Syscall interception active for PID {target_pid} via eBPF/ptrace simulation."
+                f"\n[YOMI-SHADOW] [PLASMA BLUE] Surveillance ended. No malicious kernel activity detected for PID {target_pid}."
             )
-            time.sleep(2)  # Waiting for malware to make a move...
-            print(
-                f"\n[YOMI-SHADOW] [BLOOD RED] SIFT ALERT: Malicious lateral movement detected on PID {target_pid}."
-            )
-            self._trigger_zero_doubt_freeze(target_pid)
 
-        # 5. Cleanup the hook gracefully
+        # Cleanup the hook gracefully
         with self.hook_lock:
             if target_pid in self.active_hooks:
                 del self.active_hooks[target_pid]
