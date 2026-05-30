@@ -61,10 +61,14 @@ class ImmutableStamp:
         with self._lock:  # Thread-safe writing for parallel Swarm agents
             timestamp = time.time()
 
+            formatted_utc_time = time.strftime(
+                "%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp)
+            )
+
             # Granular SANS Audit Structure
             entry = {
                 "timestamp": timestamp,
-                "human_readable_time": time.ctime(timestamp),
+                "human_readable_time": formatted_utc_time,
                 "agent": agent_name,
                 "action": action_type,
                 "description": description,
