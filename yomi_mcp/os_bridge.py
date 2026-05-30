@@ -56,6 +56,12 @@ class OSBridge:
         """
         try:
             pid = int(pid)
+            if pid <= 0:
+                return {
+                    "status": "ERROR",
+                    "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
+                }
+
             if (
                 self.environment == "SIFT_LINUX"
                 or self.environment == "CODESPACES_LINUX"
@@ -94,6 +100,12 @@ class OSBridge:
         """
         try:
             pid = int(pid)
+            if pid <= 0:
+                return {
+                    "status": "ERROR",
+                    "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
+                }
+
             if (
                 self.environment == "SIFT_LINUX"
                 or self.environment == "CODESPACES_LINUX"

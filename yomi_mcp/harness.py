@@ -22,28 +22,42 @@ class YomiHarness:
         Returns a dictionary with 'is_vetoed' boolean and 'reason'.
         """
         action = intent_data.get("action", "").lower()
-        target_pid = intent_data.get("target_pid")
+        raw_pid = intent_data.get("target_pid")
 
-        # 1. Anti-Spoliation: Block banned raw commands
+        # 1. Type Confusion Protection (Force Integer)
+        target_pid = None
+        if raw_pid is not None:
+            try:
+                target_pid = int(raw_pid)
+            except ValueError:
+                return {
+                    "is_vetoed": True,
+                    "reason": f"VETO: target_pid '{raw_pid}' is not a valid integer.",
+                }
+
+        # 2. Null Pointer Protection (Strict 'is None' check to avoid PID 0 false positives)
+        if action in ["freeze", "thaw"] and target_pid is None:
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: Action '{action}' requires a valid target_pid.",
+            }
+
+        # 3. Anti-Spoliation: Block banned raw commands
         if action in self.banned_actions:
             return {
                 "is_vetoed": True,
                 "reason": f"VETO: Action '{action}' is strictly forbidden by Air-Gapped Vault.",
             }
 
-        # 2. Critical System Protection: Block freezing Core OS PIDs
-        if target_pid is not None:
-            try:
-                pid_int = int(target_pid)
-                if pid_int in self.protected_pids:
-                    return {
-                        "is_vetoed": True,
-                        "reason": f"VETO: Target PID {pid_int} is a protected core OS process.",
-                    }
-            except ValueError:
-                return {"is_vetoed": True, "reason": "VETO: Invalid PID format."}
+        # 4. Critical System Protection: Block freezing Core OS PIDs
+        # Redundant casting removed. target_pid is guaranteed to be an integer here.
+        if target_pid is not None and target_pid in self.protected_pids:
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: Target PID {target_pid} is a protected core OS process.",
+            }
 
-        # 3. Restrict allowed actions to Type-Safe functions only
+        # 5. Restrict allowed actions to Type-Safe functions only
         allowed_actions = ["freeze", "thaw", "quarantine_file"]
         if action not in allowed_actions:
             return {

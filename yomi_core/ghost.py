@@ -31,7 +31,7 @@ class GhostProtocol:
 
         try:
             # Attempt true OS-level masquerading if library is present
-            import setproctitle
+            import setproctitle  # type: ignore
 
             setproctitle.setproctitle(fake_name)
             self.is_camouflaged = True

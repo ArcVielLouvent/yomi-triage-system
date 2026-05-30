@@ -8,13 +8,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.harness import YomiHarness
 
-# Engine modules maintained for subsequent integration phases (Phase 3 & 4)
-from yomi_engine.library import OmniLibrary
-from yomi_engine.remediator import ReverserEngine
-from yomi_engine.swarm import SwarmOrchestrator
-from yomi_engine.hunter import OmniVectorHunter
-from yomi_engine.sandbox import SandboxEnvironment
-
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Core Module - The Ouroboros Router v2.0
 # Purpose: Triad Council Gatekeeper, Epistemic Uncertainty Engine, and
@@ -27,13 +20,6 @@ class YomiRouter:
         self.stance = stance
         self.audit = ImmutableStamp()
         self.harness = YomiHarness()
-
-        # Initialize subsystem instances (Standby Mode)
-        self.library = OmniLibrary()
-        self.reverser = ReverserEngine()
-        self.swarm = SwarmOrchestrator()
-        self.hunter = OmniVectorHunter()
-        self.sandbox = SandboxEnvironment()
 
         self.audit.record_action(
             agent_name="SYSTEM_BOOT",

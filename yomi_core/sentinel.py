@@ -72,38 +72,45 @@ class SentinelDaemon:
 
         try:
             while self.is_running:
-                # 1. Deploy the Predator Swarm (Micro-Agents)
-                swarm_results = self.swarm.deploy_swarm()
-                anomalies = []
+                try:
+                    # 1. Deploy the Predator Swarm (Micro-Agents)
+                    swarm_results = self.swarm.deploy_swarm()
+                    anomalies = []
 
-                # Parse findings from all active swarm agents
-                for report in swarm_results.get("reports", []):
-                    findings = report.get("findings", [])
-                    if findings:
-                        anomalies.extend(findings)
+                    # Parse findings from all active swarm agents
+                    for report in swarm_results.get("reports", []):
+                        findings = report.get("findings", [])
+                        if findings:
+                            anomalies.extend(findings)
 
-                # 2. Adaptive Polling Logic & Threat Escalation
-                if anomalies:
-                    if self.threat_level == "SAFE":
-                        print(
-                            "\n[SENTINEL] [BLOOD RED] Threat detected by Swarm! Escalating to CRITICAL mode."
-                        )
-                        self.threat_level = "CRITICAL"
+                    # 2. Adaptive Polling Logic & Threat Escalation
+                    if anomalies:
+                        if self.threat_level == "SAFE":
+                            print(
+                                "\n[SENTINEL] [BLOOD RED] Threat detected by Swarm! Escalating to CRITICAL mode."
+                            )
+                            self.threat_level = "CRITICAL"
 
-                    # Trigger AI analysis autonomously without human keyboard input
-                    self._zero_prompt_trigger(anomalies)
+                        # Trigger AI analysis autonomously without human keyboard input
+                        self._zero_prompt_trigger(anomalies)
 
-                    # Reset to escalated mode to monitor for immediate aftershocks
-                    self.threat_level = "ESCALATED"
-                else:
-                    if self.threat_level != "SAFE":
-                        print(
-                            "\n[SENTINEL] [PLASMA BLUE] System clear. Returning to SAFE mode baseline."
-                        )
-                    self.threat_level = "SAFE"
+                        # Reset to escalated mode to monitor for immediate aftershocks
+                        self.threat_level = "ESCALATED"
+                    else:
+                        if self.threat_level != "SAFE":
+                            print(
+                                "\n[SENTINEL] [PLASMA BLUE] System clear. Returning to SAFE mode baseline."
+                            )
+                        self.threat_level = "SAFE"
 
-                # 3. Dynamic Sleep (Resource Management)
-                time.sleep(self._get_polling_interval())
+                    # 3. Dynamic Sleep (Resource Management)
+                    time.sleep(self._get_polling_interval())
+
+                except Exception as e:
+                    print(
+                        f"\n[SENTINEL] [VOID BLACK] Internal Loop Error Recovered: {str(e)}"
+                    )
+                    time.sleep(5)
 
         except KeyboardInterrupt:
             print(

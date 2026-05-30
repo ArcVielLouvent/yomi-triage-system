@@ -13,6 +13,7 @@ import threading
 class OmniLibrary:
     def __init__(self):
         self.data_dir = "/workspaces/yomi-triage-system/yomi_data"
+        os.makedirs(self.data_dir, exist_ok=True)
         self.db_file = os.path.join(self.data_dir, "cve_database.json")
 
         # Thread Lock ensures data integrity if AI and Daemon access DB simultaneously
@@ -33,10 +34,13 @@ class OmniLibrary:
                     self.database = []
 
     def _save_database(self):
-        """Saves the in-memory database back to disk."""
+        """Saves the in-memory database back to disk using Atomic Write."""
         with self.database_lock:
-            with open(self.db_file, "w") as f:
+            temp_file = self.db_file + ".tmp"
+            with open(temp_file, "w") as f:
                 json.dump(self.database, f, indent=4)
+            # PATCH: Atomic replace guarantees the JSON is never corrupted on sudden exit
+            os.replace(temp_file, self.db_file)
 
     def _scraping_worker(self):
         """
@@ -77,6 +81,8 @@ class OmniLibrary:
         Cross-references suspicious artifacts with the live threat database.
         Thread-safe read operation.
         """
+        # PATCH: Fallback NoneType to empty list to prevent Iterator Crash
+        context_hints = context_hints or []
         matches = []
         search_terms = [artifact_name.lower()] + [h.lower() for h in context_hints]
 

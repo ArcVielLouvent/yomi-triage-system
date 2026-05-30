@@ -1,6 +1,7 @@
 import os
 import time
 import sys
+import shlex
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -30,7 +31,18 @@ class ReverserEngine:
         Does NOT execute the script natively to prevent spoliation.
         """
         threat_pid = anomaly_data.get("pid", "UNKNOWN_PID")
-        threat_path = anomaly_data.get("file_path", "/tmp/unknown_malware.bin")
+
+        if not isinstance(threat_pid, int):
+            msg = f"Invalid PID format ({threat_pid}). Must be an integer."
+            self.audit.record_action("REVERSER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
+        # PATCH: Sanitize filepath using shlex.quote to prevent Bash Injection!
+        threat_path = shlex.quote(raw_path)
+        timestamp = int(time.time())
+
+        raw_path = anomaly_data.get("file_path", "/tmp/unknown_malware.bin")
+        threat_path = shlex.quote(raw_path)
         timestamp = int(time.time())
 
         script_filename = f"remediation_plan_PID{threat_pid}_{timestamp}.sh"
