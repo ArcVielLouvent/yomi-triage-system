@@ -9,8 +9,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_engine.swarm import SwarmOrchestrator
 from yomi_engine.hunter import OmniVectorHunter
-from yomi_core.router import YomiRouter, OpenClawGateway
+from yomi_core.router import YomiRouter
 from yomi_engine.telemetry import TelemetryEngine
+from yomi_engine.mitre_mapper import MitreMapper
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v3.0)
@@ -52,39 +53,41 @@ class SentinelDaemon:
         return 0  # Fallback if no PID is explicitly stated
 
     def _zero_prompt_trigger(self, anomaly_data: list):
-        """
-        The Zero-Prompt Engine: Assembles forensic context autonomously without
-        human keyboard input and cascades it through the OpenClaw AI Gateway.
-        """
         print(
             "\n[SENTINEL] [CYBER-PURPLE] Anomaly verified! Engaging Zero-Prompt Engine..."
         )
 
-        # 1. Extract Target PID
         target_pid = self._extract_pid_from_anomaly(anomaly_data)
         incident_id = f"INCIDENT_PID_{target_pid}_{int(time.time())}"
+
         self.telemetry.start_timer(incident_id)
-        # 2. Deploy Root-Cause Hunter if a PID was identified
+
         hunter_context = "No specific PID identified for root-cause hunting."
         if target_pid > 0:
             hunt_result = self.hunter.hunt_root_cause(target_pid)
             hunter_context = hunt_result.get("conclusion", "Root cause unknown.")
 
-        # 3. Assemble the raw Forensic Context string for the LLM
+        mapper = MitreMapper()
+        mitre_tactics = mapper.map_anomalies(anomaly_data)
+
+        # Build the structured, hyper-contextual Zero-Prompt
         forensic_context = f"""
         [AUTONOMOUS DFIR REPORT]
-        Anomalies Detected: {json.dumps(anomaly_data)}
-        Root-Cause Context: {hunter_context}
         Target PID: {target_pid}
+        
+        1. MITRE ATT&CK MAPPING (IoE Signatures):
+        {json.dumps(mitre_tactics, indent=2)}
+        
+        2. ROOT-CAUSE TRACE:
+        {hunter_context}
         """
 
-        # 4. Route context through the Circuit Breaker (OpenClaw)
-        print("[SENTINEL] Routing forensic context to OpenClaw LLM Gateway...")
-        
+        print("[SENTINEL] Routing tactical MITRE context to OpenClaw LLM Gateway...")
+
         triage_result = self.router.execute_autonomous_triage(forensic_context)
-        
+
         executed_action = triage_result.get("status", "UNKNOWN_ACTION")
-        self.router.execute_autonomous_triage(forensic_context)
+        self.telemetry.stop_timer(incident_id, executed_action)
 
     def start(self):
         """
