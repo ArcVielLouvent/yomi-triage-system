@@ -10,6 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_engine.swarm import SwarmOrchestrator
 from yomi_engine.hunter import OmniVectorHunter
 from yomi_core.router import YomiRouter, OpenClawGateway
+from yomi_engine.telemetry import TelemetryEngine
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v3.0)
@@ -25,7 +26,7 @@ class SentinelDaemon:
         self.swarm = SwarmOrchestrator()
         self.hunter = OmniVectorHunter()
         self.router = YomiRouter()
-        self.openclaw = OpenClawGateway()
+        self.telemetry = TelemetryEngine()
 
         self.threat_level = "SAFE"  # Operational States: SAFE, ESCALATED, CRITICAL
         self.is_running = False
@@ -61,7 +62,8 @@ class SentinelDaemon:
 
         # 1. Extract Target PID
         target_pid = self._extract_pid_from_anomaly(anomaly_data)
-
+        incident_id = f"INCIDENT_PID_{target_pid}_{int(time.time())}"
+        self.telemetry.start_timer(incident_id)
         # 2. Deploy Root-Cause Hunter if a PID was identified
         hunter_context = "No specific PID identified for root-cause hunting."
         if target_pid > 0:
@@ -78,6 +80,10 @@ class SentinelDaemon:
 
         # 4. Route context through the Circuit Breaker (OpenClaw)
         print("[SENTINEL] Routing forensic context to OpenClaw LLM Gateway...")
+        
+        triage_result = self.router.execute_autonomous_triage(forensic_context)
+        
+        executed_action = triage_result.get("status", "UNKNOWN_ACTION")
         self.router.execute_autonomous_triage(forensic_context)
 
     def start(self):
