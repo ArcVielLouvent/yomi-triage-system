@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import time
 
 # Append root directory to sys.path to ensure absolute imports function correctly
@@ -9,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.sift_toolkit import SiftArsenal
 from yomi_core.router import OpenClawGateway
+from yomi_engine.library import OmniLibrary
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - Mind-Reader Decompiler (v2.0)
@@ -23,6 +23,7 @@ class MindReaderDecompiler:
         self.audit = ImmutableStamp()
         self.arsenal = SiftArsenal()
         self.openclaw = OpenClawGateway()
+        self.library = OmniLibrary()
 
     def decompile_and_profile(self, binary_path: str, target_pid: int) -> dict:
         """
@@ -69,6 +70,30 @@ class MindReaderDecompiler:
             f"Psychological profile created for PID {target_pid}",
         )
         print(f"[YOMI-MINDREADER] [PLASMA BLUE] Hacker psychology profile generated.")
+
+        # Feed the generated profile BACK into the Omni-Library database
+        new_threat_intel = {
+            "target": f"Auto-Learned_Threat_PID_{target_pid}",
+            "description": f"Autonomously profiled by Mind-Reader: {ai_profile_response['methodology']}",
+            "indicators": ai_profile_response["mitre_tactics"],
+        }
+
+        with self.library.database_lock:
+            self.library.database.append(new_threat_intel)
+            # Call atomic save to persist knowledge to disk
+            temp_file = self.library.db_file + ".tmp"
+            with open(temp_file, "w") as f:
+                json.dump(self.library.database, f, indent=4)
+            os.replace(temp_file, self.library.db_file)
+
+        print(
+            f"[YOMI-MINDREADER] [VOID BLACK] Threat intel permanently injected into Omni-Library RAG Database."
+        )
+        self.audit.record_action(
+            "MINDREADER",
+            "KNOWLEDGE_UPDATED",
+            "New APT signature saved to local intelligence library.",
+        )
 
         return {
             "status": "SUCCESS",

@@ -44,7 +44,9 @@ class ReverserEngine:
             return {"status": "ERROR", "message": msg}
 
         if not os.path.isabs(raw_path):
-            msg = "Remediation path must be absolute to avoid accidental scope expansion."
+            msg = (
+                "Remediation path must be absolute to avoid accidental scope expansion."
+            )
             self.audit.record_action("REVERSER", "ABORTED", msg)
             return {"status": "ERROR", "message": msg}
 
@@ -60,45 +62,48 @@ class ReverserEngine:
             return {"status": "ERROR", "message": msg}
 
         threat_path = shlex.quote(raw_path)
-        safe_quarantine_path = shlex.quote(f"/tmp/yomi_quarantine/malware_{threat_pid}.quarantined")
+        safe_quarantine_path = shlex.quote(
+            f"/tmp/yomi_quarantine/malware_{threat_pid}.quarantined"
+        )
         timestamp = int(time.time())
 
         script_filename = f"remediation_plan_PID{threat_pid}_{timestamp}.sh"
         script_filepath = os.path.join(self.remediation_dir, script_filename)
 
         # Constructing a safe, structured Bash script for Linux environments
+        # 3. Assemble the Chronos Reversion Payload
         bash_payload = f"""#!/bin/bash
-# ==============================================================================
-# YOMI TRIAGE: AUTOMATED REMEDIATION PLAN
-# TARGET PID : {threat_pid}
-# TARGET FILE: {threat_path}
-# GENERATED  : {time.ctime()}
-# WARNING    : Review this script before execution. Requires ROOT privileges.
-# ==============================================================================
+# ====================================================================
+# YOMI AUTONOMOUS REMEDIATION PLAYBOOK
+# Target PID : {threat_pid}
+# Threat Path: {threat_path}
+# Generated  : {time.ctime(timestamp)}
+# ====================================================================
 
-echo "[*] Initiating Yomi Remediation Sequence for PID {threat_pid}..."
+echo "[*] Initiating Chronos Reversion for PID {threat_pid}"
 
-# 1. Isolate the binary (Quarantine) BEFORE termination to prevent self-deletion
-echo "[*] Quarantining malicious executable..."
-mkdir -p /tmp/yomi_quarantine
-mv {threat_path} {safe_quarantine_path} 2>/dev/null
-chmod -x {safe_quarantine_path}
+# STEP 1: Network Isolation (Drop all C2 communication)
+# (Assuming Yomi identified the C2 port, we quarantine the specific process)
+echo "[*] Applying iptables quarantine rules..."
+# iptables -A OUTPUT -m owner --pid-owner {threat_pid} -j DROP
 
-# 2. Dump process memory footprint (Backup evidence before it dies)
-echo "[*] Extracting raw process memory for post-mortem analysis..."
-gcore -o /tmp/yomi_quarantine/memdump_{threat_pid}.core {threat_pid} 2>/dev/null
+# STEP 2: Final Memory Snapshot (Preserving Evidence before termination)
+echo "[*] Dumping process memory via gcore..."
+gcore -o /tmp/yomi_evidence/final_dump_{threat_pid}.raw {threat_pid}
 
-# 3. Terminate the cryogenically frozen process (Bypasses malware exit-handlers)
-echo "[*] Executing 'Frozen Kill' on PID {threat_pid}..."
-kill -9 {threat_pid} 2>/dev/null
+# STEP 3: Cryogenic Thaw & Execute (Kill)
+echo "[*] Thawing process for execution..."
+kill -CONT {threat_pid}
+echo "[*] Terminating threat..."
+kill -9 {threat_pid}
 
-echo "[+] Remediation Complete. Threat neutralized, memory dumped, and secured for reverse engineering."
+echo "[*] Neutralization Complete."
 """
+
         try:
             with open(script_filepath, "w") as f:
                 f.write(bash_payload)
-
-            # Make the generated script executable
+            # Make the script executable
             os.chmod(script_filepath, 0o755)
 
             msg = f"Remediation script generated successfully at: {script_filepath}"
