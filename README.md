@@ -77,6 +77,8 @@ Yomi natively integrates with the following SANS SIFT Workstation tools via its 
 
 -   **Binary Analysis:** `Radare2 / YARA` (Reverse engineering and signature matching).
 
+-   **Network Forensics:** `TShark / TCPDump` (Parsing PCAP files to identify Command & Control beaconing and lateral movement).
+
 
 ## 6\. Installation & Getting Started
 
@@ -100,6 +102,9 @@ python -m yomi_core.sentinel
 
 # 3. Engage the Ouroboros Self-Healing Daemon & OS Camouflage
 python -m yomi_core.ghost
+
+# 4. Generate Remediation Scripts (The Reverser)
+python yomi_engine/remediator.py
 
 ```
 

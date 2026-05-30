@@ -100,4 +100,3 @@ class OmniLibrary:
             "status": "CLEAN_OR_UNKNOWN",
             "analysis": "No immediate threats found in the Omni-Library for this artifact.",
         }
-
