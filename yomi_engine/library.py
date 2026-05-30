@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import requests
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - The Omni-Library (v2.0)
@@ -44,32 +45,39 @@ class OmniLibrary:
 
     def _scraping_worker(self):
         """
-        Background daemon that periodically fetches new threat intelligence.
-        Operates asynchronously without blocking the main triage execution.
+        Continuous Scraping Daemon.
+        Silently polls NVD/GitHub threat feeds every 1 hour in the background.
         """
-        # In a real environment, this would use requests.get() to pull from MITRE/NVD APIs.
-        # For this prototype, we simulate the autonomous discovery of a zero-day threat.
-        time.sleep(5)  # Delay before first background scrape
-
+        print("[YOMI-LIBRARY] [VOID BLACK] Continuous Scraping Daemon armed. Polling for global zero-days...")
+        
         while True:
-            # Generate a simulated zero-day threat payload
-            new_threat = {
-                "cve_id": f"CVE-ZERO-DAY-{int(time.time())}",
-                "target": "Unknown Autonomous Agent",
-                "description": "Background scraping detected a newly published zero-day signature.",
-                "indicators": ["dynamic_memory_hook", "shadow_net_evasion"],
-                "remediation": "Engage Cryogenic Freeze immediately.",
-            }
-
-            with self.database_lock:
-                # Only add if it's not bloating the DB during testing (keep it under 50 entries)
-                if len(self.database) < 50:
-                    self.database.append(new_threat)
-
-            self._save_database()
-
-            # Polling interval: Waits 15 seconds before scraping the internet again
-            time.sleep(15)
+            try:
+                # Simulated connection to National Vulnerability Database (NVD) or CIRCL API
+                # In production, this uses valid API keys and rate limits
+                response = requests.get("https://cve.circl.lu/api/last", timeout=10)
+                
+                if response.status_code == 200:
+                    cves = response.json()[:5] # Take latest 5 threats
+                    
+                    with self.database_lock:
+                        for item in cves:
+                            new_entry = {
+                                "target": item.get('id', 'Unknown_CVE'),
+                                "description": item.get('summary', 'No description'),
+                                "indicators": [item.get('cvss', 'No CVSS')]
+                            }
+                            # Only add if it doesn't already exist
+                            if not any(db_item.get('target') == new_entry['target'] for db_item in self.database):
+                                self.database.append(new_entry)
+                        
+                        self._save_database()
+                    print(f"\n[YOMI-LIBRARY] [CYBER-PURPLE] Omni-Library Updated. Absorbed {len(cves)} new global threats.")
+            except Exception as e:
+                # Fail silently to prevent disrupting the main Triage engine
+                pass
+            
+            # Sleep for 1 hour before scraping again
+            time.sleep(3600)
 
     def _start_continuous_scraping(self):
         """Spins up the scraping daemon in a separate background thread."""

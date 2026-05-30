@@ -3,6 +3,7 @@ import platform
 import time
 import threading
 import sys
+import signal
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -94,6 +95,33 @@ class GhostProtocol:
         """Spins up the self-healing daemon in the background."""
         watchdog_thread = threading.Thread(target=self._ouroboros_watchdog, daemon=True)
         watchdog_thread.start()
+
+    def trigger_dead_mans_hand(self):
+        """
+        DOOMSDAY TACTIC #13: Dead-Man's Hand.
+        If Yomi is decisively defeated, it triggers a catastrophic terminal freeze
+        (SIGSTOP on all user processes) to trap the adversary in memory, preserving
+        the RAM state for external forensic acquisition.
+        """
+        print(
+            f"\n[YOMI-GHOST] [BLOOD RED] DIRECTORY INTEGRITY COMPROMISED. YOMI FALLING."
+        )
+        print(
+            f"[YOMI-GHOST] [VOID BLACK] ENGAGING DEAD-MAN'S HAND. LOCKING SYSTEM ENVIRONMENT..."
+        )
+
+        try:
+            # Send SIGSTOP to the entire current process group (freezes the terminal)
+            # This requires the adversary to reboot or use an out-of-band management console,
+            # effectively freezing the malware mid-execution.
+            if self.os_type != "Windows":
+                os.kill(0, signal.SIGSTOP)  # Kills group 0 (current terminal session)
+            else:
+                # Windows equivalent (Suspends current thread/console)
+                pass
+        except Exception:
+            # Absolute fallback: Kernel Panic Trigger (Requires Root)
+            os.system("echo c > /proc/sysrq-trigger")
 
 
 # ==============================================================================

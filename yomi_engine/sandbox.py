@@ -124,17 +124,34 @@ class SandboxEnvironment:
             self.audit.record_action("LAZARUS", "RESURRECTION_FAILED", error_msg)
             return {"status": "ERROR", "message": error_msg}
 
-    def _monitor_awakened_threat(self, target_pid: int):
+    def _monitor_awakened_threat(self, target_pid: int, contained_path: str):
         """
         Background daemon observing the awakened malware inside the sandbox.
-        Prepares integration hooks for Tahap 4.3 (Mirage Protocol).
+        AUTONOMOUSLY TRIGGERS The Mirage Protocol and Mind-Reader Decompiler!
         """
-        # Monitoring phase (Mock simulation for 3 seconds)
-        time.sleep(3)
+        # Dynamic import to prevent circular dependencies
+        from yomi_engine.mirage import MirageProtocol
+        from yomi_engine.mind_reader import MindReaderDecompiler
+
         print(
-            f"\n[YOMI-LAZARUS] [PLASMA BLUE] Observation complete. PID {target_pid} behavioral signature recorded."
+            f"\n[YOMI-LAZARUS] [PLASMA BLUE] Commencing Autonomous Interrogation on PID {target_pid}..."
         )
-        print(f"[YOMI-LAZARUS] Target is ready for Mind-Reader Decompilation.")
+        time.sleep(2)  # Let the malware wake up
+
+        # 1. Deploy Mirage Protocol (Honeytokens)
+        mirage = MirageProtocol()
+        mirage.deploy_hallucination(target_pid, os_target="LINUX")
+
+        time.sleep(2)  # Let the malware bite the bait
+
+        # 2. Trigger Mind-Reader Decompiler (Reverse Engineering)
+        print(
+            f"[YOMI-LAZARUS] [VOID BLACK] Bait taken. Executing Mind-Reader Profiling..."
+        )
+        decompiler = MindReaderDecompiler()
+        decompiler.decompile_and_profile(contained_path, target_pid)
+
+        print(f"[YOMI-LAZARUS] [CYBER-PURPLE] Autonomous Interrogation Complete.")
 
 
 # ==============================================================================
