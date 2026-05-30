@@ -1,112 +1,201 @@
 import time
-import json
 import os
-from rich.live import Live
+import sys
+from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
+from rich.live import Live
+from rich.table import Table
 from rich.align import Align
+from rich import box
+
+# Append root directory to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Core Module - The Dark Map
-# Purpose: Tactical TUI Dashboard reading from the Immutable Stamp in real-time.
+# YOMI TRIAGE SYSTEM: Core Module - The Obsidian Torii Gateway (TUI)
 # ==============================================================================
 
-LOG_FILE = "/workspaces/yomi-triage-system/yomi_data/yomi_chain_of_custody.jsonl"
 
-def generate_layout():
-    """Creates the grid layout for the dashboard."""
-    layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="main"),
-        Layout(name="footer", size=10)
-    )
-    layout["main"].split_row(
-        Layout(name="intel_panel"),
-        Layout(name="action_panel")
-    )
-    return layout
+class YomiDashboard:
+    def __init__(self):
+        self.console = Console()
 
-def get_latest_logs(max_lines=8):
-    """Reads the tail of the immutable stamp log."""
-    if not os.path.exists(LOG_FILE):
-        return []
-    with open(LOG_FILE, 'r') as f:
-        lines = f.readlines()
-        logs = []
-        for line in lines[-max_lines:]:
-            try:
-                logs.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return logs
+        self.colors = {
+            "void_black": "black",
+            "ghost_white": "#F8F8FF",
+            "obsidian": "#4A4A4A",
+            "plasma_blue": "#00FFFF",
+            "cyber_purple": "#BF00FF",
+            "blood_red": "#FF0000",
+            "warning": "#FFD700",
+        }
 
-def build_dashboard():
-    """Updates the dashboard panels based on log data."""
-    logs = get_latest_logs()
-    
-    # 1. HEADER
-    header = Panel(Align.center(Text("YOMI AUTONOMOUS DFIR COMMAND CENTER", style="bold red")), style="red")
+        self.current_status = "SAFE"
+        self.active_pid = "NONE"
+        self.action_log = []
 
-    # 2. FOOTER (Live Audit Trail)
-    table = Table(show_header=True, header_style="bold magenta", expand=True)
-    table.add_column("Timestamp", style="dim", width=25)
-    table.add_column("Agent", style="cyan", width=15)
-    table.add_column("Action", style="green", width=20)
-    table.add_column("Description", style="white")
+    def generate_torii_logo(self) -> Align:
+        """
+        Generates the KuroTech Obsidian Torii Gateway in ASCII.
+        Using Align.center ensures the block is centered without destroying
+        the internal relative spacing of the ASCII art.
+        """
+        torii_ascii = (
+            "   ▄▄██████████████████████████████▄▄     \n"
+            "     ▀▀▀▀████▀▀▀▀▀▀▀▀▀▀▀▀▀▀████▀▀▀▀       \n"
+            "  ▄██████████████████████████████████▄    \n"
+            "         ████              ████           \n"
+            "         ████   KUROTECH   ████           \n"
+            "         ████              ████           \n"
+            "         ████              ████           \n"
+            "         ----------------------           \n"
+            "         | Yomi Triage System |           \n"
+            "         ----------------------           "
+        )
+        # Left-justify the text to preserve the shape, then center the whole block
+        ascii_text = Text(torii_ascii, style=self.colors["obsidian"], justify="left")
+        return Align.center(ascii_text)
 
-    for log in logs:
-        # Extracting data safely
-        ts = log.get("timestamp", "")[:19] # Cut microseconds
-        agent = log.get("agent", "Unknown")
-        action = log.get("action_type", "")
-        desc = log.get("description", "")
-        table.add_row(ts, agent, action, desc)
+    def make_header(self) -> Panel:
+        grid = Table.grid(expand=True)
+        grid.add_column(justify="center", ratio=1)
+        grid.add_row(self.generate_torii_logo())
+        grid.add_row(
+            Text(
+                "AUTONOMOUS DFIR TRIAGE ENGINE v4.0",
+                style=f"bold {self.colors['ghost_white']}",
+                justify="center",
+            )
+        )
+        return Panel(grid, box=box.ROUNDED, border_style=self.colors["plasma_blue"])
 
-    footer = Panel(table, title="[bold green]Live Immutable Audit Trail", style="green")
+    def make_telemetry_panel(self) -> Panel:
+        table = Table(box=box.SIMPLE, expand=True, show_header=False)
+        table.add_column("Metric", style=self.colors["ghost_white"])
+        table.add_column("Value", justify="right")
 
-    # 3. INTEL PANEL (Left) & ACTION PANEL (Right)
-    # We scan the logs to see what the current status is
-    latest_action = logs[-1].get("action_type", "") if logs else "IDLE"
-    
-    intel_content = Text("\nWaiting for Swarm Telemetry...", style="dim")
-    action_content = Text("\nNo Active Threats.", style="dim")
+        status_color = self.colors["plasma_blue"]
+        if self.current_status == "CRITICAL":
+            status_color = self.colors["blood_red"]
+        elif self.current_status == "DECEPTION":
+            status_color = self.colors["cyber_purple"]
+        elif self.current_status == "WARNING":
+            status_color = self.colors["warning"]
 
-    if "SWARM" in latest_action:
-        intel_content = Text("\n[!] SWARM DEPLOYED: Scanning Processes, Network, and Files...", style="bold yellow")
-    elif "ROOT_CAUSE" in latest_action:
-        intel_content = Text("\n[+] REVERSE TRACKING: Analyzing temporal logs for Patient Zero...", style="bold cyan")
-    elif "THREAT_INTEL" in latest_action:
-        intel_content = Text("\n[!] CVE MATCH FOUND: Retrieving tactical data from Omni-Library...", style="bold red")
+        table.add_row(
+            "System Status", Text(self.current_status, style=f"bold {status_color}")
+        )
+        table.add_row(
+            "Target PID",
+            Text(
+                str(self.active_pid),
+                style="bold yellow" if self.active_pid != "NONE" else "dim",
+            ),
+        )
+        table.add_row("Epistemic Doubt", Text("0%", style=self.colors["plasma_blue"]))
+        table.add_row(
+            "eBPF Sentinel", Text("ARMED (Ring-0)", style=self.colors["ghost_white"])
+        )
 
-    if "PLAYBOOK" in latest_action:
-        action_content = Text("\n[!] PLAYBOOK DRAFTED: Remediation script is ready for Commander approval.", style="bold red blink")
-    elif "HONEYPOT" in latest_action or "DETONATE" in latest_action:
-        action_content = Text("\n[+] ACTIVE DEFENSE: Sandbox and Decoys are currently LIVE.", style="bold magenta")
+        return Panel(
+            table, title="[b]TACTICAL TELEMETRY", border_style=self.colors["obsidian"]
+        )
 
-    intel_panel = Panel(Align.center(intel_content, vertical="middle"), title="[bold yellow]Swarm & Intel Radar", style="yellow")
-    action_panel = Panel(Align.center(action_content, vertical="middle"), title="[bold red]Action & Remediation", style="red")
+    def make_log_panel(self) -> Panel:
+        log_text = Text()
+        # Ensure we only show the last 7 logs so it doesn't overflow the UI
+        for log in self.action_log[-7:]:
+            log_text.append(f"{log}\n")
 
-    # Assemble
-    layout = generate_layout()
-    layout["header"].update(header)
-    layout["footer"].update(footer)
-    layout["main"]["intel_panel"].update(intel_panel)
-    layout["main"]["action_panel"].update(action_panel)
-    
-    return layout
+        return Panel(
+            log_text,
+            title="[b]IMMUTABLE LEDGER STREAM",
+            border_style=self.colors["obsidian"],
+        )
+
+    def update_state(self, status: str, pid: str, new_log: str):
+        self.current_status = status
+        self.active_pid = pid
+        timestamp = time.strftime("%H:%M:%S")
+
+        log_style = self.colors["ghost_white"]
+        if "FREEZE" in new_log or "CRITICAL" in new_log:
+            log_style = self.colors["blood_red"]
+        elif "SHADOW NET" in new_log or "MIRAGE" in new_log:
+            log_style = self.colors["cyber_purple"]
+        elif "WARNING" in status:
+            log_style = self.colors["warning"]
+
+        styled_log = Text(f"[{timestamp}] {new_log}", style=log_style)
+        self.action_log.append(styled_log)
+
+    def render_layout(self) -> Layout:
+        layout = Layout()
+        layout.split_column(
+            Layout(
+                name="header", size=14
+            ),  # Increased height to fit the logo perfectly
+            Layout(name="body", ratio=1),
+        )
+        layout["body"].split_row(
+            Layout(name="telemetry", ratio=1), Layout(name="logs", ratio=2)
+        )
+
+        layout["header"].update(self.make_header())
+        layout["telemetry"].update(self.make_telemetry_panel())
+        layout["logs"].update(self.make_log_panel())
+
+        return layout
+
 
 # ==============================================================================
-# MAIN LOOP
+# DEVELOPMENT TESTING BLOCK (Live UI Simulation)
 # ==============================================================================
 if __name__ == "__main__":
-    os.system('clear')
-    with Live(build_dashboard(), refresh_per_second=2, screen=True) as live:
-        try:
+    tui = YomiDashboard()
+
+    tui.update_state("SAFE", "NONE", "System Boot Sequence Initiated...")
+    tui.update_state("SAFE", "NONE", "Ouroboros Watchdog Online.")
+    tui.update_state("SAFE", "NONE", "Omni-Library RAG synced.")
+
+    # We use a try-except block with an INFINITE loop so it doesn't close
+    try:
+        with Live(tui.render_layout(), refresh_per_second=4, screen=True) as live:
+            time.sleep(1)
+            tui.update_state("SAFE", "NONE", "Predator Swarm scanning Volatility...")
+            live.update(tui.render_layout())
+            time.sleep(1.5)
+
+            tui.update_state(
+                "WARNING", "4092", "Anomaly detected in VAD. Epistemic Doubt: 65%"
+            )
+            live.update(tui.render_layout())
+            time.sleep(1.5)
+
+            tui.update_state(
+                "DECEPTION", "4092", "SHADOW NET & eBPF Interception Deployed."
+            )
+            live.update(tui.render_layout())
+            time.sleep(1.5)
+
+            tui.update_state("CRITICAL", "4092", "CRYOGENIC FREEZE EXECUTED (SIGSTOP).")
+            live.update(tui.render_layout())
+            time.sleep(1.5)
+
+            tui.update_state(
+                "DECEPTION",
+                "4092",
+                "MIRAGE OS Honeytokens injected into Lazarus Chamber.",
+            )
+            live.update(tui.render_layout())
+
+            # THE INFINITE LOOP: Keeps the dashboard open until you press Ctrl+C
             while True:
-                live.update(build_dashboard())
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            pass
+                time.sleep(1)
+
+    except KeyboardInterrupt:
+        # Graceful exit without printing garbage characters
+        print("\n[+] Dashboard terminated by User (Ctrl+C).")
+        sys.exit(0)
