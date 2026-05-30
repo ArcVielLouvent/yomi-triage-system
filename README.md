@@ -93,10 +93,13 @@ git clone https://github.com/ArcVielLouvent/yomi-triage-system.git && cd yomi-tr
 
 ```bash
 # 1. Start the Background Scraping Daemon
-python yomi_engine/library.py
+python -m yomi_engine.library
 
 # 2. Engage the Sentinel Loop & AI Copilot
-python yomi_core/sentinel.py
+python -m yomi_core.sentinel
+
+# 3. Engage the Ouroboros Self-Healing Daemon & OS Camouflage
+python -m yomi_core.ghost
 
 ```
 
