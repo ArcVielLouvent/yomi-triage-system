@@ -32,17 +32,35 @@ class ReverserEngine:
         """
         threat_pid = anomaly_data.get("pid", "UNKNOWN_PID")
 
-        if not isinstance(threat_pid, int):
-            msg = f"Invalid PID format ({threat_pid}). Must be an integer."
+        if not isinstance(threat_pid, int) or threat_pid <= 0:
+            msg = f"Invalid PID format ({threat_pid}). Must be a positive integer."
             self.audit.record_action("REVERSER", "ABORTED", msg)
             return {"status": "ERROR", "message": msg}
 
-        # PATCH: Sanitize filepath using shlex.quote to prevent Bash Injection!
-        threat_path = shlex.quote(raw_path)
-        timestamp = int(time.time())
-
         raw_path = anomaly_data.get("file_path", "/tmp/unknown_malware.bin")
+        if not isinstance(raw_path, str) or not raw_path:
+            msg = "Invalid file path supplied for remediation."
+            self.audit.record_action("REVERSER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
+        if not os.path.isabs(raw_path):
+            msg = "Remediation path must be absolute to avoid accidental scope expansion."
+            self.audit.record_action("REVERSER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
+        if not os.path.exists(raw_path) or not os.path.isfile(raw_path):
+            msg = f"Target remediation file does not exist or is not a regular file: {raw_path}"
+            self.audit.record_action("REVERSER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
+        resolved_path = os.path.realpath(raw_path)
+        if resolved_path in ("/", "/bin", "/sbin", "/usr", "/etc"):
+            msg = f"Refusing remediation on critical system path: {resolved_path}"
+            self.audit.record_action("REVERSER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
         threat_path = shlex.quote(raw_path)
+        safe_quarantine_path = shlex.quote(f"/tmp/yomi_quarantine/malware_{threat_pid}.quarantined")
         timestamp = int(time.time())
 
         script_filename = f"remediation_plan_PID{threat_pid}_{timestamp}.sh"
@@ -63,8 +81,8 @@ echo "[*] Initiating Yomi Remediation Sequence for PID {threat_pid}..."
 # 1. Isolate the binary (Quarantine) BEFORE termination to prevent self-deletion
 echo "[*] Quarantining malicious executable..."
 mkdir -p /tmp/yomi_quarantine
-mv {threat_path} /tmp/yomi_quarantine/malware_{threat_pid}.quarantined 2>/dev/null
-chmod -x /tmp/yomi_quarantine/malware_{threat_pid}.quarantined
+mv {threat_path} {safe_quarantine_path} 2>/dev/null
+chmod -x {safe_quarantine_path}
 
 # 2. Dump process memory footprint (Backup evidence before it dies)
 echo "[*] Extracting raw process memory for post-mortem analysis..."

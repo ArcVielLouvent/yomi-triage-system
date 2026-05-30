@@ -51,16 +51,19 @@ class SwarmOrchestrator:
         """Micro-Agent tasked with Volatility Memory Scanning."""
         # Placeholder for actual memory dump path in production
         dump_path = "/tmp/system_ram.raw"
-        result = self.arsenal.run_volatility_netscan(dump_path)
-
         findings = []
-        if result.get("status") in ["SUCCESS", "MOCK_SUCCESS"]:
-            output = result.get("output", "")
-            # Pattern matching for known suspicious indicators (e.g., specific PID or IP)
-            if "ESTABLISHED" in output and "4092" in output:
-                findings.append(
-                    "Rogue C2 connection to 103.45.0.0:80 detected on PID 4092 via Volatility."
-                )
+        if not os.path.exists(dump_path):
+            findings.append("Memory dump not present; skipping Volatility analysis.")
+        else:
+            result = self.arsenal.run_volatility_netscan(dump_path)
+
+            if result.get("status") in ["SUCCESS", "MOCK_SUCCESS"]:
+                output = result.get("output", "")
+                # Pattern matching for known suspicious indicators (e.g., specific PID or IP)
+                if "ESTABLISHED" in output and "4092" in output:
+                    findings.append(
+                        "Rogue C2 connection to 103.45.0.0:80 detected on PID 4092 via Volatility."
+                    )
 
         with self.report_lock:
             self.active_reports.append({"agent": "Memory_Agent", "findings": findings})
@@ -68,16 +71,19 @@ class SwarmOrchestrator:
     def _network_agent(self):
         """Micro-Agent tasked with TShark PCAP Analysis."""
         pcap_path = "/tmp/live_capture.pcap"
-        result = self.arsenal.run_tshark_pcap(pcap_path)
-
         findings = []
-        if result.get("status") in ["SUCCESS", "MOCK_SUCCESS"]:
-            output = result.get("output", "")
-            # Pattern matching for beaconing signatures
-            if "103.45.0.0" in output:
-                findings.append(
-                    "Suspicious outbound beaconing to known malicious IP (103.45.0.0) via TShark."
-                )
+        if not os.path.exists(pcap_path):
+            findings.append("PCAP capture not present; skipping TShark analysis.")
+        else:
+            result = self.arsenal.run_tshark_pcap(pcap_path)
+
+            if result.get("status") in ["SUCCESS", "MOCK_SUCCESS"]:
+                output = result.get("output", "")
+                # Pattern matching for beaconing signatures
+                if "103.45.0.0" in output:
+                    findings.append(
+                        "Suspicious outbound beaconing to known malicious IP (103.45.0.0) via TShark."
+                    )
 
         with self.report_lock:
             self.active_reports.append({"agent": "Network_Agent", "findings": findings})

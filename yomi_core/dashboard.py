@@ -35,7 +35,13 @@ def get_latest_logs(max_lines=8):
         return []
     with open(LOG_FILE, 'r') as f:
         lines = f.readlines()
-        return [json.loads(line) for line in lines[-max_lines:]]
+        logs = []
+        for line in lines[-max_lines:]:
+            try:
+                logs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return logs
 
 def build_dashboard():
     """Updates the dashboard panels based on log data."""

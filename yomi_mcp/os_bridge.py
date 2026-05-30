@@ -61,6 +61,16 @@ class OSBridge:
                     "status": "ERROR",
                     "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
                 }
+            if pid <= 4:
+                return {
+                    "status": "ERROR",
+                    "reason": f"CRITICAL: Attempt to freeze protected PID {pid}. Blocked.",
+                }
+            if pid in (os.getpid(), os.getppid()):
+                return {
+                    "status": "ERROR",
+                    "reason": "CRITICAL: Refusing to freeze the current or parent process.",
+                }
 
             if (
                 self.environment == "SIFT_LINUX"
@@ -103,7 +113,17 @@ class OSBridge:
             if pid <= 0:
                 return {
                     "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
+                    "reason": f"CRITICAL: Attempt to thaw illegal PID {pid}. Blocked.",
+                }
+            if pid <= 4:
+                return {
+                    "status": "ERROR",
+                    "reason": f"CRITICAL: Attempt to thaw protected PID {pid}. Blocked.",
+                }
+            if pid in (os.getpid(), os.getppid()):
+                return {
+                    "status": "ERROR",
+                    "reason": "CRITICAL: Refusing to thaw the current or parent process.",
                 }
 
             if (

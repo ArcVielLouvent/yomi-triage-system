@@ -32,6 +32,17 @@ class SandboxEnvironment:
 
         self.active_sandboxes = {}
 
+    def _validate_binary_path(self, binary_path: str) -> tuple[bool, str]:
+        if not isinstance(binary_path, str) or not binary_path:
+            return False, "Invalid binary path supplied."
+        if not os.path.isabs(binary_path):
+            return False, "Binary path must be absolute."
+        if not os.path.exists(binary_path):
+            return False, f"Binary path does not exist: {binary_path}"
+        if not os.path.isfile(binary_path):
+            return False, f"Binary path is not a regular file: {binary_path}"
+        return True, ""
+
     def _secure_containment(self, binary_path: str, threat_pid: int) -> str:
         """
         Safely copies the malicious binary into the isolated Lazarus Chamber.
@@ -41,15 +52,18 @@ class SandboxEnvironment:
         safe_filename = f"isolated_target_{threat_pid}_{timestamp}.bin"
         destination_path = os.path.join(self.chamber_dir, safe_filename)
 
+        is_valid, error = self._validate_binary_path(binary_path)
+        if not is_valid:
+            msg = f"Sandbox containment aborted: {error}"
+            self.audit.record_action("LAZARUS", "CONTAINMENT_ERROR", msg)
+            return "ERROR"
+
         try:
             # Safely copy the artifact instead of moving, to preserve original evidence state
-            if os.path.exists(binary_path):
-                shutil.copy2(binary_path, destination_path)
-                # Restrict execution permissions (Chmod 0700: Owner can read/write/execute only)
-                os.chmod(destination_path, 0o700)
-                return destination_path
-            else:
-                return "MOCK_CONTAINMENT_PATH"
+            shutil.copy2(binary_path, destination_path)
+            # Restrict execution permissions (Chmod 0700: Owner can read/write/execute only)
+            os.chmod(destination_path, 0o700)
+            return destination_path
         except Exception as e:
             msg = (
                 f"Failed to isolate binary {binary_path} into Lazarus Chamber: {str(e)}"

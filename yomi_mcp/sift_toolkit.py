@@ -19,6 +19,19 @@ class SiftArsenal:
         self.os_bridge = OSBridge()
         # Dependency injection complete. Mock status is natively handled by OSBridge.
 
+    def _validate_target_path(self, path: str, allow_block_device: bool = False) -> tuple[bool, str]:
+        if not isinstance(path, str) or not path:
+            return False, "Invalid path supplied for forensic tool."
+        if not os.path.isabs(path):
+            return False, "Path must be absolute to prevent relative path abuse."
+        if not os.path.exists(path):
+            return False, f"Target path does not exist: {path}"
+        if allow_block_device:
+            return True, ""
+        if not os.path.isfile(path):
+            return False, f"Target path is not a regular file: {path}"
+        return True, ""
+
     def _run_subprocess(self, command_list: list, tool_name: str) -> dict:
         """
         Executes a command safely without shell=True to prevent injection.
@@ -74,6 +87,10 @@ class SiftArsenal:
                 "output": "Offset(V)  Local Address  Foreign Address  State  PID  Owner\n0x9812  10.0.0.5:4444  103.45.0.0:80  ESTABLISHED  4092  sshd",
             }
 
+        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility", "error": error}
+
         cmd = ["vol.py", "-f", memory_dump_path, "windows.netscan.NetScan"]
         return self._run_subprocess(cmd, "volatility")
 
@@ -94,6 +111,10 @@ class SiftArsenal:
                 "output": "0x00401000  call sym.imp.socket\n0x00401005  push str.103.45.0.0\n0x0040100a  call sym.imp.connect",
             }
 
+        is_valid, error = self._validate_target_path(binary_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "radare2", "error": error}
+
         cmd = ["r2", "-q", "-c", "iz", binary_path]
         return self._run_subprocess(cmd, "radare2")
 
@@ -113,6 +134,10 @@ class SiftArsenal:
             }
 
         # Safe array command, prevents shell injection
+        is_valid, error = self._validate_target_path(target_drive_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "plaso", "error": error}
+
         cmd = [
             "log2timeline.py",
             "--parsers",
@@ -135,6 +160,10 @@ class SiftArsenal:
                 "output": "d/d * 1234: /Windows/System32/config/SAM\nr/r * 9999: /Temp/mimikatz.exe",
             }
 
+        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "tsk", "error": error}
+
         cmd = ["fls", "-r", "-p", image_path]
         return self._run_subprocess(cmd, "tsk")
 
@@ -150,6 +179,10 @@ class SiftArsenal:
                 "tool": "tshark",
                 "output": "10.0.0.5 -> 103.45.0.0 HTTP GET /payload.bin\n10.0.0.5 -> 8.8.8.8 DNS Standard query A c2-server.evil.com",
             }
+
+        is_valid, error = self._validate_target_path(pcap_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "tshark", "error": error}
 
         cmd = [
             "tshark",

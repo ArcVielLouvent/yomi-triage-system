@@ -1,5 +1,6 @@
 import os
 import json
+import fcntl
 import hashlib
 from datetime import datetime, timezone
 
@@ -19,14 +20,20 @@ class ImmutableStamp:
         self.log_file = os.path.join(self.log_dir, "yomi_chain_of_custody.jsonl")
         self.last_hash = self._get_last_hash()
 
+    def _ensure_log_exists(self):
+        if not os.path.exists(self.log_file):
+            with open(self.log_file, 'a', encoding='utf-8'):
+                pass
+            os.chmod(self.log_file, 0o600)
+
     def _get_last_hash(self):
         """Retrieves the hash of the last log entry to maintain the chain."""
-        if not os.path.exists(self.log_file) or os.path.getsize(self.log_file) == 0:
-            return "0" * 64 # Genesis hash
-        
+        self._ensure_log_exists()
         try:
-            with open(self.log_file, 'r') as f:
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                fcntl.flock(f, fcntl.LOCK_SH)
                 lines = f.readlines()
+                fcntl.flock(f, fcntl.LOCK_UN)
                 if lines:
                     last_entry = json.loads(lines[-1])
                     return last_entry.get("hash", "")
@@ -55,9 +62,14 @@ class ImmutableStamp:
         log_entry["hash"] = current_hash
         self.last_hash = current_hash
 
-        with open(self.log_file, 'a') as f:
+        self._ensure_log_exists()
+        with open(self.log_file, 'a', encoding='utf-8') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps(log_entry) + '\n')
-            
+            f.flush()
+            os.fsync(f.fileno())
+            fcntl.flock(f, fcntl.LOCK_UN)
+
         # Terminal feedback (Will be replaced by TUI later)
         print(f"[YOMI-AUDIT] Sealed: {action_type} by {agent_name} | Hash: {current_hash[:8]}...")
         return current_hash

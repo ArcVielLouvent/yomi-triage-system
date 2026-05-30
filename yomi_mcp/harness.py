@@ -58,7 +58,7 @@ class YomiHarness:
             }
 
         # 5. Restrict allowed actions to Type-Safe functions only
-        allowed_actions = ["freeze", "thaw", "quarantine_file"]
+        allowed_actions = ["freeze", "thaw"]
         if action not in allowed_actions:
             return {
                 "is_vetoed": True,

@@ -81,8 +81,23 @@ class OmniLibrary:
         Cross-references suspicious artifacts with the live threat database.
         Thread-safe read operation.
         """
-        # PATCH: Fallback NoneType to empty list to prevent Iterator Crash
-        context_hints = context_hints or []
+        if not isinstance(artifact_name, str) or not artifact_name:
+            return {
+                "status": "ERROR",
+                "analysis": "Invalid artifact name supplied.",
+                "matches": [],
+            }
+
+        if context_hints is None:
+            context_hints = []
+        if not isinstance(context_hints, list):
+            return {
+                "status": "ERROR",
+                "analysis": "Context hints must be a list of strings.",
+                "matches": [],
+            }
+
+        context_hints = [str(h) for h in context_hints]
         matches = []
         search_terms = [artifact_name.lower()] + [h.lower() for h in context_hints]
 

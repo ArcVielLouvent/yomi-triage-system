@@ -104,7 +104,7 @@ python -m yomi_core.sentinel
 python -m yomi_core.ghost
 
 # 4. Generate Remediation Scripts (The Reverser)
-python yomi_engine/remediator.py
+python -m yomi_engine.remediator
 
 ```
 

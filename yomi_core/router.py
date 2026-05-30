@@ -1,6 +1,5 @@
 import sys
 import json
-import requests # type: ignore
 import os
 import time
 
@@ -72,6 +71,7 @@ class YomiRouter:
         self.stance = stance
         self.audit = ImmutableStamp()
         self.harness = YomiHarness()
+        self.allowed_actions = ["freeze", "thaw"]
 
         self.audit.record_action(
             agent_name="SYSTEM_BOOT",
@@ -103,6 +103,30 @@ class YomiRouter:
         action = intent_data.get("action", "unknown")
         target_pid = intent_data.get("target_pid", None)
 
+        if not isinstance(action, str) or not action.strip():
+            error_msg = "FATAL: AI intent action is missing or invalid."
+            self.audit.record_action("JUDGE", "VETO", error_msg)
+            return {"status": "REJECTED", "message": error_msg}
+
+        action = action.lower()
+        if action not in self.allowed_actions:
+            error_msg = f"FATAL: Action '{action}' is not permitted by the Triad Council."
+            self.audit.record_action("JUDGE", "VETO", error_msg)
+            return {"status": "REJECTED", "message": error_msg}
+
+        if not isinstance(doubt_score, (int, float)) or doubt_score < 0 or doubt_score > 100:
+            error_msg = "FATAL: Invalid epistemic doubt score supplied by AI."
+            self.audit.record_action("JUDGE", "VETO", error_msg)
+            return {"status": "REJECTED", "message": error_msg}
+
+        if action in ["freeze", "thaw"]:
+            try:
+                target_pid = int(target_pid)
+            except (TypeError, ValueError):
+                error_msg = f"FATAL: target_pid '{target_pid}' is not a valid integer."
+                self.audit.record_action("JUDGE", "VETO", error_msg)
+                return {"status": "REJECTED", "message": error_msg}
+
         print(f"\n[TRIAD COUNCIL] Red (Attack)  : {red_agent}")
         print(f"[TRIAD COUNCIL] Blue (Defense): {blue_agent}")
         print(f"[TRIAD COUNCIL] Judge Verdict : {judge}")
@@ -118,6 +142,8 @@ class YomiRouter:
                 "message": msg,
                 "next_step": "Deploy Shadow Net",
             }
+
+        target_pid = int(target_pid) if target_pid is not None else None
 
         # 5. Tactical Execution (Low Doubt -> Route to Air-Gapped Harness)
         print(

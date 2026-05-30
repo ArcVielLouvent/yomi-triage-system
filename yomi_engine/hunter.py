@@ -27,9 +27,20 @@ class OmniVectorHunter:
             f"\n[YOMI-HUNTER] [CYBER-PURPLE] Initiating Root-Cause Hunt for PID {target_pid}..."
         )
 
+        if not isinstance(target_pid, int) or target_pid <= 0:
+            msg = f"Invalid PID for root-cause hunt: {target_pid}. Aborting."
+            self.audit.record_action("HUNTER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
+        forensic_device_path = "/dev/sda1"
+        if not os.path.isabs(forensic_device_path) or not os.path.exists(forensic_device_path):
+            msg = f"Forensic device path unavailable: {forensic_device_path}. Aborting hunt."
+            self.audit.record_action("HUNTER", "ABORTED", msg)
+            return {"status": "ERROR", "message": msg}
+
         # Step 1: Temporal Hunting (Plaso Log2Timeline)
         print("[YOMI-HUNTER] Querying Plaso super-timeline for temporal anomalies...")
-        plaso_result = self.arsenal.run_plaso_timeline("/dev/sda1")
+        plaso_result = self.arsenal.run_plaso_timeline(forensic_device_path)
 
         temporal_clue = "None"
         if plaso_result.get("status") in ["SUCCESS", "MOCK_SUCCESS"]:
