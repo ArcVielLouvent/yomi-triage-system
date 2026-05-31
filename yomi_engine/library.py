@@ -1,4 +1,4 @@
-import gzip
+import lzma
 import hashlib
 import io
 import json
@@ -6,7 +6,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -23,12 +23,8 @@ from yomi_audit.stamp import ImmutableStamp
 
 
 class OmniLibrary:
-    RECENT_FEED_URL = (
-        "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json.gz"
-    )
-    ARCHIVE_FEED_TEMPLATE = (
-        "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-{year}.json.gz"
-    )
+    RECENT_FEED_URL = "https://github.com/fkie-cad/nvd-json-data-feeds/releases/latest/download/CVE-recent.json.xz"
+    ARCHIVE_FEED_TEMPLATE = "https://github.com/fkie-cad/nvd-json-data-feeds/releases/latest/download/CVE-{year}.json.xz"
     DEFAULT_SYNC_INTERVAL = 3600
 
     def __init__(
@@ -138,7 +134,9 @@ class OmniLibrary:
 
     def _persist_manifest(self):
         manifest = {
-            "years": {str(year): count for year, count in sorted(self.year_index.items())},
+            "years": {
+                str(year): count for year, count in sorted(self.year_index.items())
+            },
             "total_count": sum(self.year_index.values()),
             "last_updated": self.last_updated,
             "source": self.source,
@@ -174,20 +172,40 @@ class OmniLibrary:
         path = self._year_file(year)
         if not os.path.exists(path):
             return {}
+        raw_content = None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                content = json.load(f)
+                raw_content = f.read()
+                content = json.loads(raw_content)
                 if isinstance(content, dict):
                     return content
+                if isinstance(content, list):
+                    converted: dict[str, dict] = {}
+                    for item in content:
+                        if isinstance(item, dict) and item.get("cve_id"):
+                            converted[str(item["cve_id"])] = item
+                    return converted
         except Exception as exc:
-            corrupt_path = f"{path}.corrupt.{int(time.time())}"
+            corrupt_path = f"{path}.corrupt.{int(time.time())}.json"
             try:
-                os.replace(path, corrupt_path)
+                backup_obj = {
+                    "_corrupt_reason": str(exc),
+                    "_timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                    "_source_file": os.path.basename(path),
+                    "raw_data": raw_content,
+                }
+                with open(corrupt_path + ".tmp", "w", encoding="utf-8") as backup_file:
+                    json.dump(backup_obj, backup_file, indent=2, sort_keys=True)
+                os.replace(corrupt_path + ".tmp", corrupt_path)
                 self.audit.record_action(
                     "OMNI_LIBRARY",
                     "YEAR_FILE_CORRUPTION",
-                    "Detected corrupted year store and backed it up.",
-                    metadata={"year_file": path, "backup_file": corrupt_path, "error": str(exc)},
+                    "Detected corrupted year store and backed it up with metadata.",
+                    metadata={
+                        "year_file": path,
+                        "backup_file": corrupt_path,
+                        "error": str(exc),
+                    },
                 )
             except Exception:
                 pass
@@ -231,7 +249,10 @@ class OmniLibrary:
                     normalized = self._normalize_entry(item)
                     if not normalized:
                         continue
-                    year = self._extract_year_from_entry(normalized) or datetime.utcnow().year
+                    year = (
+                        self._extract_year_from_entry(normalized)
+                        or datetime.now(timezone.utc).year
+                    )
                     normalized["record_hash"] = self._compute_entry_hash(normalized)
                     buckets.setdefault(year, {})[normalized["cve_id"]] = normalized
 
@@ -272,68 +293,34 @@ class OmniLibrary:
     def _normalize_entry(
         self, item: dict, origin_feed: str | None = None
     ) -> dict | None:
-        """Normalize incoming CVE records to the library schema."""
+        """Normalize incoming NVD 2.0 (GitHub) CVE records to the library schema."""
         if not isinstance(item, dict):
             return None
 
-        data_origin = item.get("origin_feed") or origin_feed or "LEGACY"
-        ingested_at = item.get("ingested_at") or datetime.utcnow().isoformat() + "Z"
-
-        cve_id = None
-        description = "No description"
-        published_date = None
-        cvss_score = None
-        reference_urls: list[str] = []
-        target = None
-
-        if "cve" in item and isinstance(item.get("cve"), dict):
-            cve_meta = item["cve"].get("CVE_data_meta", {})
-            cve_id = cve_meta.get("ID")
-            descriptions = (
-                item["cve"].get("description", {}).get("description_data", [])
-            )
-            description = (
-                descriptions[0].get("value", description)
-                if descriptions
-                else description
-            )
-            published_date = item.get("publishedDate")
-            cvss_score = self._extract_cvss(item)
-
-            references = item["cve"].get("references", {}).get("reference_data", [])
-            reference_urls = [ref.get("url") for ref in references if ref.get("url")]
-
-            vendor_data = (
-                item["cve"].get("affects", {}).get("vendor", {}).get("vendor_data", [])
-            )
-            products: list[str] = []
-            for vendor in vendor_data:
-                for product in vendor.get("product_data", []):
-                    products.append(product.get("product_name", ""))
-            target = ", ".join(sorted({p for p in products if p})) or cve_id
-        else:
-            cve_id = item.get("cve_id") or item.get("id") or item.get("target")
-            description = item.get("description") or item.get("summary") or description
-            published_date = (
-                item.get("published_date")
-                or item.get("Published")
-                or item.get("published")
-            )
-            cvss_score = item.get("cvss_score") or item.get("cvss")
-            reference_urls = (
-                item.get("references")
-                if isinstance(item.get("references"), list)
-                else []
-            )
-            target = item.get("target") or cve_id
-
+        cve_obj = item.get("cve", {})
+        cve_id = cve_obj.get("id")
         if not cve_id:
             return None
+
+        data_origin = origin_feed or "GITHUB_MIRROR"
+        ingested_at = datetime.now(timezone.utc).isoformat() + "Z"
+        published_date = cve_obj.get("published")
+
+        descriptions = cve_obj.get("descriptions", [])
+        description = next(
+            (d["value"] for d in descriptions if d.get("lang") == "en"),
+            "No description available.",
+        )
+
+        references = cve_obj.get("references", [])
+        reference_urls = [ref.get("url") for ref in references if ref.get("url")]
+
+        cvss_score = self._extract_cvss(cve_obj)
 
         indicators = [cve_id] + reference_urls
         return {
             "cve_id": str(cve_id),
-            "target": str(target),
+            "target": str(cve_id),
             "description": str(description),
             "published_date": published_date,
             "cvss_score": cvss_score,
@@ -343,21 +330,16 @@ class OmniLibrary:
             "ingested_at": ingested_at,
         }
 
-    def _extract_cvss(self, item: dict):
-        impact = item.get("impact", {})
-        base_metric_v3 = impact.get("baseMetricV3", {})
-        if base_metric_v3:
-            score = base_metric_v3.get("cvssV3", {}).get("baseScore")
-            if score is not None:
-                return score
+    def _extract_cvss(self, cve_obj: dict):
+        """Ekstrak CVSS Score dari struktur NVD 2.0"""
+        metrics = cve_obj.get("metrics", {})
 
-        base_metric_v2 = impact.get("baseMetricV2", {})
-        if base_metric_v2:
-            score = base_metric_v2.get("cvssV2", {}).get("baseScore")
-            if score is not None:
-                return score
-
-        return item.get("cvss")
+        for version in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+            if version in metrics and len(metrics[version]) > 0:
+                score = metrics[version][0].get("cvssData", {}).get("baseScore")
+                if score is not None:
+                    return score
+        return None
 
     def _merge_external_entries(
         self, entries: list, origin_feed: str | None = None
@@ -372,7 +354,10 @@ class OmniLibrary:
                 continue
 
             normalized["record_hash"] = self._compute_entry_hash(normalized)
-            year = self._extract_year_from_entry(normalized) or datetime.utcnow().year
+            year = (
+                self._extract_year_from_entry(normalized)
+                or datetime.now(timezone.utc).year
+            )
             year_buckets.setdefault(year, {})[normalized["cve_id"]] = normalized
 
         with self.database_lock:
@@ -396,8 +381,8 @@ class OmniLibrary:
                         }
                         if normalized_snapshot != existing_snapshot:
                             year_store[cve_id].update(normalized)
-                            year_store[cve_id]["record_hash"] = self._compute_entry_hash(
-                                year_store[cve_id]
+                            year_store[cve_id]["record_hash"] = (
+                                self._compute_entry_hash(year_store[cve_id])
                             )
                             updated += 1
                 if year_store:
@@ -428,18 +413,20 @@ class OmniLibrary:
             return False
 
         try:
-            with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
-                payload = json.load(gz)
+            with lzma.LZMAFile(fileobj=io.BytesIO(content)) as xz:
+                payload = json.load(xz)
 
-            items = payload.get("CVE_Items", [])
+            items = payload.get("vulnerabilities", [])
             added = self._merge_external_entries(items, origin_feed="NVD_RECENT")
             if added:
-                self.last_updated = datetime.utcnow().isoformat() + "Z"
+                self.last_updated = datetime.now(timezone.utc).isoformat() + "Z"
                 self.source = "NVD_RECENT"
                 self._persist_manifest()
                 print(f"[YOMI-LIBRARY] Added {added} CVE records from recent feed.")
 
-            self.last_updated = self.last_updated or datetime.utcnow().isoformat() + "Z"
+            self.last_updated = (
+                self.last_updated or datetime.now(timezone.utc).isoformat() + "Z"
+            )
             self.source = "NVD_RECENT"
             self.online = True
             self.audit.record_action(
@@ -470,7 +457,7 @@ class OmniLibrary:
         self, start_year: int = 1999, end_year: int | None = None
     ):
         if end_year is None:
-            end_year = datetime.utcnow().year
+            end_year = datetime.now(timezone.utc).year
 
         if not self._has_network():
             print("[YOMI-LIBRARY] Network unavailable. Cannot seed full NVD archive.")
@@ -484,10 +471,10 @@ class OmniLibrary:
                 if content is None:
                     continue
 
-                with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
-                    payload = json.load(gz)
+                with lzma.LZMAFile(fileobj=io.BytesIO(content)) as xz:
+                    payload = json.load(xz)
 
-                items = payload.get("CVE_Items", [])
+                items = payload.get("vulnerabilities", [])
                 added = self._merge_external_entries(
                     items, origin_feed=f"NVD_ARCHIVE_{year}"
                 )
@@ -497,7 +484,7 @@ class OmniLibrary:
             except Exception:
                 continue
 
-        self.last_updated = datetime.utcnow().isoformat() + "Z"
+        self.last_updated = datetime.now(timezone.utc).isoformat() + "Z"
         self.source = "NVD_FULL_ARCHIVE"
         self.online = True
         self.audit.record_action(

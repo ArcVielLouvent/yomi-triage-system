@@ -102,7 +102,10 @@ class ImmutableStamp:
         return key if self._is_valid_hmac_key(key) else None
 
     def _is_valid_hmac_key(self, key: bytes | bytearray | None) -> bool:
-        return isinstance(key, (bytes, bytearray)) and len(key) >= self.HMAC_KEY_LENGTH_BYTES
+        return (
+            isinstance(key, (bytes, bytearray))
+            and len(key) >= self.HMAC_KEY_LENGTH_BYTES
+        )
 
     def _canonical_json(self, payload: dict) -> str:
         return json.dumps(
@@ -147,9 +150,41 @@ class ImmutableStamp:
         os.replace(temp_name, destination)
 
     def _backup_corrupted_ledger(self, reason: str | None = None) -> None:
+        if not os.path.exists(self.ledger_file):
+            return
+
+        backup_name = (
+            f"{self.ledger_file}{self.CORRUPT_SUFFIX}.{int(time.time())}.jsonl"
+        )
         try:
-            backup_name = f"{self.ledger_file}{self.CORRUPT_SUFFIX}.{int(time.time())}.jsonl"
-            os.replace(self.ledger_file, backup_name)
+            raw_entries = []
+            with open(self.ledger_file, "r", encoding="utf-8") as ledger:
+                for line_number, raw_line in enumerate(ledger, 1):
+                    raw_line = raw_line.rstrip("\n")
+                    parsed = None
+                    try:
+                        parsed = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    raw_entries.append(
+                        {
+                            "line_number": line_number,
+                            "raw_line": raw_line,
+                            "parsed": parsed,
+                        }
+                    )
+
+            backup_obj = {
+                "_corrupt_reason": reason or "Unknown ledger corruption",
+                "_timestamp": datetime.now(timezone.utc).isoformat(),
+                "_source_file": os.path.basename(self.ledger_file),
+                "raw_data": raw_entries,
+            }
+            self._atomic_write(
+                backup_name,
+                self._canonical_json(backup_obj) + "\n",
+                encoding="utf-8",
+            )
             details = f" Reason: {reason}" if reason else ""
             print(f"[YOMI-AUDIT] Corrupted ledger backed up to {backup_name}.{details}")
         except Exception:
@@ -164,7 +199,9 @@ class ImmutableStamp:
         deleted = 0
         backups = []
         for filename in os.listdir(self.data_dir):
-            if filename.startswith(os.path.basename(self.ledger_file) + self.CORRUPT_SUFFIX):
+            if filename.startswith(
+                os.path.basename(self.ledger_file) + self.CORRUPT_SUFFIX
+            ):
                 backups.append(os.path.join(self.data_dir, filename))
 
         backups.sort(key=lambda path: os.path.getmtime(path), reverse=True)
@@ -180,7 +217,10 @@ class ImmutableStamp:
         return deleted
 
     def _load_or_initialize_ledger(self) -> str:
-        if not os.path.exists(self.ledger_file) or os.path.getsize(self.ledger_file) == 0:
+        if (
+            not os.path.exists(self.ledger_file)
+            or os.path.getsize(self.ledger_file) == 0
+        ):
             return self._write_genesis_entry()
 
         try:
@@ -213,15 +253,14 @@ class ImmutableStamp:
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"Invalid JSON at line {line_number}: {exc.msg}"
-                    )
+                    raise ValueError(f"Invalid JSON at line {line_number}: {exc.msg}")
 
                 self._validate_ledger_entry(entry, line_number)
 
                 if entry["previous_hash"] != last_hash:
                     raise ValueError(
-                        f"Broken chain at line {line_number}: expected previous_hash {last_hash}, found {entry['previous_hash']}.")
+                        f"Broken chain at line {line_number}: expected previous_hash {last_hash}, found {entry['previous_hash']}."
+                    )
 
                 entry_copy = dict(entry)
                 entry_copy.pop("hash", None)
@@ -232,18 +271,21 @@ class ImmutableStamp:
                     legacy_hash = self._compute_legacy_hash(entry_copy)
                     if legacy_hash != entry["hash"]:
                         raise ValueError(
-                            f"Hash mismatch at line {line_number}: computed {actual_hash} / {legacy_hash}, stored {entry['hash']}.")
+                            f"Hash mismatch at line {line_number}: computed {actual_hash} / {legacy_hash}, stored {entry['hash']}."
+                        )
 
                 if expected_hmac is not None:
                     if not self.hmac_key:
                         raise ValueError(
-                            f"HMAC present but audit key is unavailable at line {line_number}.")
+                            f"HMAC present but audit key is unavailable at line {line_number}."
+                        )
                     hmac_payload = dict(entry_copy)
                     hmac_payload.pop("entry_hmac", None)
                     actual_hmac = self._compute_entry_hmac(hmac_payload)
                     if actual_hmac != expected_hmac:
                         raise ValueError(
-                            f"HMAC mismatch at line {line_number}: computed {actual_hmac}, stored {expected_hmac}.")
+                            f"HMAC mismatch at line {line_number}: computed {actual_hmac}, stored {expected_hmac}."
+                        )
                 elif self.hmac_key:
                     if line_number == 1 and entry.get("action_type") == "GENESIS":
                         print(
@@ -251,7 +293,8 @@ class ImmutableStamp:
                         )
                     else:
                         raise ValueError(
-                            f"Missing HMAC on ledger entry at line {line_number} while HMAC enforcement is enabled.")
+                            f"Missing HMAC on ledger entry at line {line_number} while HMAC enforcement is enabled."
+                        )
 
                 last_hash = entry["hash"]
 
@@ -277,7 +320,9 @@ class ImmutableStamp:
         }
 
         if not isinstance(entry, dict):
-            raise ValueError(f"Ledger entry at line {line_number} is not a JSON object.")
+            raise ValueError(
+                f"Ledger entry at line {line_number} is not a JSON object."
+            )
 
         missing = required_keys - entry.keys()
         if missing:
@@ -287,12 +332,14 @@ class ImmutableStamp:
 
         if entry.get("ledger_version") != self.LEDGER_VERSION:
             raise ValueError(
-                f"Unsupported ledger version at line {line_number}: {entry.get('ledger_version')}.")
-
-        if not isinstance(entry.get("previous_hash"), str) or len(entry["previous_hash"]) != 64:
-            raise ValueError(
-                f"Invalid previous_hash format at line {line_number}."
+                f"Unsupported ledger version at line {line_number}: {entry.get('ledger_version')}."
             )
+
+        if (
+            not isinstance(entry.get("previous_hash"), str)
+            or len(entry["previous_hash"]) != 64
+        ):
+            raise ValueError(f"Invalid previous_hash format at line {line_number}.")
 
         if not isinstance(entry.get("hash"), str) or len(entry["hash"]) != 64:
             raise ValueError(f"Invalid hash format at line {line_number}.")
@@ -399,11 +446,3 @@ class ImmutableStamp:
             "entry_count": self._count_entries(),
             "hmac_enabled": bool(self.hmac_key),
         }
-
-    def _count_entries(self) -> int:
-        count = 0
-        with open(self.ledger_file, "r", encoding="utf-8") as ledger:
-            for line in ledger:
-                if line.strip():
-                    count += 1
-        return count
