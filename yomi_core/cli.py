@@ -98,8 +98,7 @@ def get_latest_ledger_log() -> dict:
             os.path.dirname(__file__),
             "..",
             "yomi_data",
-            "audit_logs",
-            "cryptographic_ledger.jsonl",
+            "yomi_chain_of_custody.jsonl",
         )
     )
     if not os.path.exists(log_path):

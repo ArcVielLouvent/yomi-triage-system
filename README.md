@@ -98,7 +98,7 @@ Prior to LLM ingestion, the `MitreMapper` module autonomously translates raw heu
 
 -   **Architecture Diagram:** Completed (See Section 2)
 
--   **Cryptographic Audit Logs:** Operational (Hash-chained ledger located in `yomi_data/audit_logs/cryptographic_ledger.jsonl`)
+-   **Cryptographic Audit Logs:** Operational (Hash-chained ledger located in `yomi_data/yomi_chain_of_custody.jsonl`)
 
 -   **Latency Benchmarking:** Operational (Benchmarked against 60-second AI breakout times via `telemetry.py`)
 
@@ -170,7 +170,7 @@ python yomi_engine/mind_reader.py
 
 -   **Holographic Matrix TUI:** A `rich`-powered Terminal User Interface providing real-time visual telemetry of the DFIR lifecycle.
 
--   **Court-Ready Cryptographic Dossier:** Upgrading the current `cryptographic_ledger.jsonl` into a GPG-signed, hash-chained PDF report suitable for international court admissibility.
+-   **Court-Ready Cryptographic Dossier:** Upgrading the current `yomi_chain_of_custody.jsonl` into a GPG-signed, hash-chained PDF report suitable for international court admissibility.
 
 -   **GPG-Signed Playbooks:** Ensuring generated `.sh` remediation scripts are cryptographically verifiable.
 
