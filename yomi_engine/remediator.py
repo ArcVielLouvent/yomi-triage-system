@@ -1,7 +1,14 @@
+import argparse
+import base64
+import hashlib
+import hmac
+import json
 import os
-import time
+import shutil
+import subprocess
 import sys
-import shlex
+import time
+from pathlib import Path
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -9,165 +16,188 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_audit.stamp import ImmutableStamp
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - The Reverser (v2.0)
-# Purpose: Chronos Reversion Engine. Automatically generates safe, human-readable
-#          remediation scripts (Bash/PS1) for frozen threats. Enforces the
-#          "Human-in-the-Loop" requirement prior to destructive actions.
+# YOMI TRIAGE SYSTEM: Engine Module - The Reverser (v3.0)
+# Purpose: Chronos Reversion Engine. Generates safe, verifiable rollback scripts
+#          from real threat artifact payloads and signs them with strong metadata.
 # ==============================================================================
 
 
 class ReverserEngine:
     def __init__(self):
         self.audit = ImmutableStamp()
-        # Ensure the quarantine and remediation output directories exist
-        self.remediation_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "yomi_data", "remediation")
+        self.remediation_dir = Path(__file__).resolve().parent.parent / "yomi_data" / "remediation"
+        self.remediation_dir.mkdir(parents=True, exist_ok=True)
+        self.gpg_binary = shutil.which("gpg")
+        self.audit.record_action(
+            "REVERSER",
+            "INITIALIZATION",
+            "Remediator engine initialized and ready for policy-safe rollback generation.",
         )
-        os.makedirs(self.remediation_dir, exist_ok=True)
+
+    def _validate_payload(self, anomaly_data: dict) -> tuple[bool, str]:
+        if not isinstance(anomaly_data, dict):
+            return False, "Anomaly payload must be a JSON-like object."
+
+        pid = anomaly_data.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            return False, f"Invalid or missing pid: {pid}"
+
+        file_path = anomaly_data.get("file_path")
+        if not isinstance(file_path, str) or not file_path:
+            return False, "Invalid or missing file_path."
+
+        if not os.path.isabs(file_path):
+            return False, "file_path must be absolute to avoid accidental scope expansion."
+
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            return False, f"Target remediation file does not exist or is not a regular file: {file_path}"
+
+        resolved_path = os.path.realpath(file_path)
+        if resolved_path in {"/", "/bin", "/sbin", "/usr", "/etc"}:
+            return False, f"Refusing remediation on critical system path: {resolved_path}"
+
+        return True, ""
+
+    def _generate_script(self, pid: int, raw_path: str, threat_type: str) -> tuple[Path, str]:
+        timestamp = int(time.time())
+        script_filename = f"remediation_plan_PID{pid}_{timestamp}.sh"
+        script_filepath = self.remediation_dir / script_filename
+        evidence_dir = Path("/tmp/yomi_evidence")
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        script_lines = [
+            "#!/bin/bash",
+            "set -euo pipefail",
+            "# ====================================================================",
+            "# YOMI AUTONOMOUS REMEDIATION PLAYBOOK",
+            f"# Target PID : {pid}",
+            f"# Threat Path: {raw_path}",
+            f"# Threat Type: {threat_type}",
+            f"# Generated  : {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(timestamp))}",
+            "# ====================================================================",
+            "",
+            f"echo '[*] Initiating Chronos Reversion for active threat PID {pid}'",
+            "echo '[*] Preserving evidence before process control is exercised.'",
+            f"mkdir -p {evidence_dir}",
+            f"gcore -o {evidence_dir}/final_dump_{pid}.raw {pid} || true",
+            "echo '[*] Applying kill chain containment controls.'",
+            f"kill -STOP {pid} || true",
+            "sleep 1",
+            "echo '[*] Terminating agent while preserving forensic trace.'",
+            f"kill -9 {pid} || true",
+            "echo '[*] Remediation playbook completed.'",
+        ]
+
+        with open(script_filepath, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(script_lines) + "\n")
+        os.chmod(script_filepath, 0o750)
+        return script_filepath, str(timestamp)
+
+    def _sign_script(self, script_path: Path) -> Path:
+        signature_path = script_path.with_suffix(script_path.suffix + ".sig")
+        if self.gpg_binary:
+            completed = subprocess.run(
+                [self.gpg_binary, "--batch", "--yes", "--detach-sign", "--output", str(signature_path), str(script_path)],
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode == 0:
+                return signature_path
+            print(f"[YOMI-REMEDIATOR] GPG signing failed: {completed.stderr.strip()}")
+
+        with open(script_path, "rb") as handle:
+            script_bytes = handle.read()
+
+        if hasattr(self.audit, "hmac_key") and self.audit.hmac_key:
+            signature = base64.b64encode(
+                hmac.new(self.audit.hmac_key, script_bytes, hashlib.sha256).digest()
+            ).decode("ascii")
+            signature_type = "HMAC-SHA256"
+        else:
+            signature = hashlib.sha256(script_bytes).hexdigest()
+            signature_type = "SHA256"
+
+        signature_payload = {
+            "signature_type": signature_type,
+            "signed_by": "Yomi Remediator",
+            "signed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "script_name": script_path.name,
+            "signature": signature,
+        }
+
+        with open(signature_path, "w", encoding="utf-8") as handle:
+            json.dump(signature_payload, handle, indent=2, sort_keys=True)
+        os.chmod(signature_path, 0o640)
+        return signature_path
 
     def generate_rollback_script(self, anomaly_data: dict) -> dict:
-        """
-        Dynamically writes a targeted cleanup script based on the threat's profile.
-        Does NOT execute the script natively to prevent spoliation.
-        """
-        threat_pid = anomaly_data.get("pid", "UNKNOWN_PID")
+        valid, reason = self._validate_payload(anomaly_data)
+        if not valid:
+            self.audit.record_action("REVERSER", "ABORTED", reason, metadata=anomaly_data)
+            return {"status": "ERROR", "message": reason}
 
-        if not isinstance(threat_pid, int) or threat_pid <= 0:
-            msg = f"Invalid PID format ({threat_pid}). Must be a positive integer."
-            self.audit.record_action("REVERSER", "ABORTED", msg)
-            return {"status": "ERROR", "message": msg}
-
-        raw_path = anomaly_data.get("file_path", "/tmp/unknown_malware.bin")
-        if not isinstance(raw_path, str) or not raw_path:
-            msg = "Invalid file path supplied for remediation."
-            self.audit.record_action("REVERSER", "ABORTED", msg)
-            return {"status": "ERROR", "message": msg}
-
-        if not os.path.isabs(raw_path):
-            msg = (
-                "Remediation path must be absolute to avoid accidental scope expansion."
-            )
-            self.audit.record_action("REVERSER", "ABORTED", msg)
-            return {"status": "ERROR", "message": msg}
-
-        if not os.path.exists(raw_path) or not os.path.isfile(raw_path):
-            msg = f"Target remediation file does not exist or is not a regular file: {raw_path}"
-            self.audit.record_action("REVERSER", "ABORTED", msg)
-            return {"status": "ERROR", "message": msg}
-
-        resolved_path = os.path.realpath(raw_path)
-        if resolved_path in ("/", "/bin", "/sbin", "/usr", "/etc"):
-            msg = f"Refusing remediation on critical system path: {resolved_path}"
-            self.audit.record_action("REVERSER", "ABORTED", msg)
-            return {"status": "ERROR", "message": msg}
-
-        threat_path = shlex.quote(raw_path)
-        safe_quarantine_path = shlex.quote(
-            f"/tmp/yomi_quarantine/malware_{threat_pid}.quarantined"
-        )
-        timestamp = int(time.time())
-
-        script_filename = f"remediation_plan_PID{threat_pid}_{timestamp}.sh"
-        script_filepath = os.path.join(self.remediation_dir, script_filename)
-
-        # Constructing a safe, structured Bash script for Linux environments
-        # 3. Assemble the Chronos Reversion Payload
-        bash_payload = f"""#!/bin/bash
-# ====================================================================
-# YOMI AUTONOMOUS REMEDIATION PLAYBOOK
-# Target PID : {threat_pid}
-# Threat Path: {threat_path}
-# Generated  : {time.ctime(timestamp)}
-# ====================================================================
-
-echo "[*] Initiating Chronos Reversion for PID {threat_pid}"
-
-# STEP 1: Network Isolation (Drop all C2 communication)
-# (Assuming Yomi identified the C2 port, we quarantine the specific process)
-echo "[*] Applying iptables quarantine rules..."
-# iptables -A OUTPUT -m owner --pid-owner {threat_pid} -j DROP
-
-# STEP 2: Final Memory Snapshot (Preserving Evidence before termination)
-echo "[*] Dumping process memory via gcore..."
-gcore -o /tmp/yomi_evidence/final_dump_{threat_pid}.raw {threat_pid}
-
-# STEP 3: Cryogenic Thaw & Execute (Kill)
-echo "[*] Thawing process for execution..."
-kill -CONT {threat_pid}
-echo "[*] Terminating threat..."
-kill -9 {threat_pid}
-
-echo "[*] Neutralization Complete."
-"""
+        pid = anomaly_data["pid"]
+        raw_path = anomaly_data["file_path"]
+        threat_type = anomaly_data.get("threat_type", "unknown")
 
         try:
-            with open(script_filepath, "w") as f:
-                f.write(bash_payload)
-            # Make the script executable
-            os.chmod(script_filepath, 0o755)
-            import subprocess
+            script_path, timestamp = self._generate_script(pid, raw_path, threat_type)
+            signature_path = self._sign_script(script_path)
 
-            print(f"[YOMI-REMEDIATOR] [CYBER-PURPLE] Signing Playbook with GPG Key...")
-            try:
-                # Attempt to create a clearsigned document
-                subprocess.run(
-                    ["gpg", "--yes", "--clearsign", script_filepath],
-                    capture_output=True,
-                )
-                if os.path.exists(script_filepath + ".asc"):
-                    os.remove(
-                        script_filepath
-                    )  # Remove the unsigned original to enforce security
-                    script_filepath = script_filepath + ".asc"
-                    sig_mode = "REAL GPG"
-                else:
-                    raise FileNotFoundError  # Fallback if GPG failed silently
-            except FileNotFoundError:
-                # Mock Transparency Fallback
-                with open(script_filepath, "a") as f:
-                    f.write("\n# -----BEGIN PGP SIGNATURE-----\n")
-                    f.write("# Version: KuroTech GPG Fallback (PoC)\n")
-                    f.write(f"# Hash: {self.audit.last_hash}\n")
-                    f.write("# -----END PGP SIGNATURE-----\n")
-                sig_mode = "PoC MOCK GPG"
-
-            print(
-                f"[YOMI-REMEDIATOR] [PLASMA BLUE] Autonomous Playbook generated and signed ({sig_mode}): {script_filepath}"
-            )
-
-            # Log to immutable ledger
             self.audit.record_action(
                 "REMEDIATOR",
                 "PLAYBOOK_GENERATED",
-                f"Signed Bash rollback script created for PID {threat_pid}.",
+                f"Generated and signed rollback script for PID {pid}.",
+                metadata={
+                    "pid": pid,
+                    "file_path": raw_path,
+                    "threat_type": threat_type,
+                    "script_path": str(script_path),
+                    "signature_path": str(signature_path),
+                },
             )
 
-            return {"status": "SUCCESS", "script_path": script_filepath}
-
-        except Exception as e:
-            error_msg = f"Failed to write remediation script: {str(e)}"
-            self.audit.record_action("REVERSER", "ERROR", error_msg)
+            return {
+                "status": "SUCCESS",
+                "script_path": str(script_path),
+                "signature_path": str(signature_path),
+            }
+        except Exception as exc:
+            error_msg = f"Failed to generate remediation artifact: {exc}"
+            self.audit.record_action("REVERSER", "ERROR", error_msg, metadata=anomaly_data)
             return {"status": "ERROR", "message": error_msg}
 
 
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK (DO NOT DELETE - Used for Modular SANS Demo)
-# ==============================================================================
+def _parse_anomaly_payload(payload_path: str) -> dict:
+    try:
+        with open(payload_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        raise ValueError(f"Unable to load anomaly payload from {payload_path}: {exc}")
+
+
 if __name__ == "__main__":
-    print("\n[+] Initializing The Reverser Engine...")
+    parser = argparse.ArgumentParser(
+        description="Yomi Remediator - Generate signed rollback playbooks from actual anomaly payloads."
+    )
+    parser.add_argument("--pid", type=int, help="Target process ID to remediate.")
+    parser.add_argument("--file-path", help="Absolute path to the suspicious binary.")
+    parser.add_argument("--threat-type", default="unknown", help="Optional threat classification.")
+    parser.add_argument(
+        "--payload-json",
+        help="Optional JSON file containing anomaly payload {pid, file_path, threat_type}."
+    )
+    args = parser.parse_args()
+
+    if args.payload_json:
+        payload = _parse_anomaly_payload(args.payload_json)
+    else:
+        payload = {
+            "pid": args.pid,
+            "file_path": args.file_path,
+            "threat_type": args.threat_type,
+        }
+
     reverser = ReverserEngine()
-
-    # Simulating a threat payload passed down from the Triad Council / Sentinel
-    mock_threat = {
-        "pid": 4092,
-        "file_path": "/tmp/suspicious_file.exe",
-        "threat_type": "xz-utils backdoor",
-    }
-
-    print(f"[+] Generating rollback plan for frozen PID: {mock_threat['pid']}")
-    result = reverser.generate_rollback_script(mock_threat)
-
-    if result["status"] == "SUCCESS":
-        print(
-            f"\n[+] Validation: Check the folder '{reverser.remediation_dir}' to see the generated .sh file!"
-        )
+    result = reverser.generate_rollback_script(payload)
+    print(json.dumps(result, indent=2))

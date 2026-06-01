@@ -64,7 +64,7 @@ class eBPFSentinel:
         """Compiles the C payload and injects it into the Linux Kernel."""
         if self.os_bridge.environment not in ["SIFT_LINUX", "CODESPACES_LINUX"]:
             print(
-                "[eBPF] Hardware unsupported for direct Kernel injection. Mock Mode enabled."
+                "[eBPF] Hardware unsupported for direct Kernel injection. Kernel tracing unavailable."
             )
             return False
 
@@ -93,7 +93,7 @@ class eBPFSentinel:
 
         except ImportError:
             print(
-                "[YOMI-eBPF] [WARNING] BCC library not found. Falling back to Mock Syscall Tracing."
+                "[YOMI-eBPF] [WARNING] BCC library not found. Kernel syscall tracing unavailable."
             )
             return False
         except Exception as e:
@@ -105,12 +105,10 @@ class eBPFSentinel:
     def monitor_pid(self, target_pid: int, duration_sec: int = 3) -> bool:
         """Listens to the Kernel perf buffer for suspicious activity by the target PID."""
         if not self.bpf_instance:
-            # Mock Behavior (Simulating a successful interception for development)
-            time.sleep(duration_sec)
             print(
-                f"[YOMI-eBPF] [BLOOD RED] MOCK KERNEL ALERT: PID {target_pid} attempted to read /etc/shadow via sys_openat!"
+                "[YOMI-eBPF] [WARNING] eBPF sensor is not armed. Kernel trace data unavailable."
             )
-            return True  # Malicious intent confirmed
+            return False
 
         # Real eBPF Execution
         malicious_intent_found = False

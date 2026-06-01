@@ -27,7 +27,7 @@ class CourtReadyDossier:
         os.makedirs(self.report_dir, exist_ok=True)
 
     def _sign_file(self, filepath: str) -> bool:
-        """Attempts absolute GPG detached signature. Falls back to Mock PoC if GPG is absent."""
+        """Attempts absolute GPG detached signature. Returns false if GPG is unavailable."""
         try:
             # Attempt true cryptographic signing
             result = subprocess.run(
@@ -39,14 +39,6 @@ class CourtReadyDossier:
         except FileNotFoundError:
             pass
 
-        # PoC Fallback: Generate a simulated cryptographic seal based on the ledger hash
-        mock_sig_path = filepath + ".asc"
-        with open(mock_sig_path, "w") as f:
-            f.write("-----BEGIN PGP SIGNATURE-----\n")
-            f.write("Version: KuroTech GPG Fallback (PoC)\n\n")
-            f.write("iQIzBAABCAAdFiEE" + self.audit.last_hash[:32] + "\n")
-            f.write(self.audit.last_hash[32:] + "ABCD==\n")
-            f.write("-----END PGP SIGNATURE-----\n")
         return False
 
     def generate_pdf_dossier(self):
@@ -91,9 +83,9 @@ class CourtReadyDossier:
         print("[YOMI-DOSSIER] [CYBER-PURPLE] Applying Cryptographic Signature...")
         is_real_gpg = self._sign_file(pdf_filename)
 
-        sig_type = "REAL GPG" if is_real_gpg else "PoC MOCK GPG"
+        sig_type = "REAL GPG" if is_real_gpg else "UNSIGNED"
         print(
-            f"[YOMI-DOSSIER] [VOID BLACK] Signature attached ({sig_type}): {pdf_filename}.asc"
+            f"[YOMI-DOSSIER] [VOID BLACK] Signature status: {sig_type}."
         )
 
         self.audit.record_action(

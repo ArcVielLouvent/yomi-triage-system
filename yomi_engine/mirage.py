@@ -66,16 +66,16 @@ class MirageProtocol:
         os.makedirs(os.path.join(linux_mirage_path, "etc"), exist_ok=True)
         os.makedirs(os.path.join(linux_mirage_path, "root", ".ssh"), exist_ok=True)
 
-        # 1. Fake /etc/shadow (Bait for credential dumpers)
-        fake_shadow_content = """root:$6$v1kQe$MOCK.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::
-sysadmin:$6$a8B9z$MOCK.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::"""
+        # 1. Deceptive /etc/shadow (Bait for credential dumpers)
+        fake_shadow_content = """root:$6$v1kQe$DECOY.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::
+sysadmin:$6$a8B9z$DECOY.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::"""
 
         with open(os.path.join(linux_mirage_path, "etc", "shadow"), "w") as f:
             f.write(fake_shadow_content)
 
-        # 2. Fake SSH Keys (Bait for lateral movement/worming)
+        # 2. Deceptive SSH Keys (Bait for lateral movement/worming)
         fake_ssh_key = "-----BEGIN OPENSSH PRIVATE KEY-----\n"
-        fake_ssh_key += "b3BlbnNzaC1rZXktdjEAAAA...[MOCK_KEY]...\n"
+        fake_ssh_key += "b3BlbnNzaC1rZXktdjEAAAA...[DECOY_KEY]...\n"
         fake_ssh_key += "-----END OPENSSH PRIVATE KEY-----\n"
         with open(os.path.join(linux_mirage_path, "root", ".ssh", "id_rsa"), "w") as f:
             f.write(fake_ssh_key)
@@ -96,13 +96,13 @@ sysadmin:$6$a8B9z$MOCK.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::"""
             exist_ok=True,
         )
 
-        # 1. Fake SAM Hive (Bait for Mimikatz/hash dumpers)
+        # 1. Deceptive SAM Hive (Bait for Mimikatz/hash dumpers)
         with open(
             os.path.join(win_mirage_path, "Windows", "System32", "config", "SAM"), "w"
         ) as f:
-            f.write("YOMI_MOCK_SAM_REGISTRY_HIVE_BINARY_DATA_CORRUPTION_TRAP")
+            f.write("YOMI_DECOY_SAM_REGISTRY_HIVE_BINARY_DATA_CORRUPTION_TRAP")
 
-        # 2. Fake High-Value Data (Bait for Ransomware encryption)
+        # 2. Deceptive High-Value Data (Bait for Ransomware encryption)
         with open(
             os.path.join(
                 win_mirage_path,
@@ -114,7 +114,7 @@ sysadmin:$6$a8B9z$MOCK.HASH.DO.NOT.USE.YOMI:19000:0:99999:7:::"""
             "w",
         ) as f:
             f.write(
-                "YOMI_MOCK_DOCUMENT_TRAP: If malware reads or encrypts this, intent is 100% malicious."
+                "YOMI_DECOY_DOCUMENT_TRAP: If malware reads or encrypts this, intent is 100% malicious."
             )
 
         return win_mirage_path

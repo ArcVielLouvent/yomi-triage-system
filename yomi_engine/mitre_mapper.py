@@ -112,16 +112,3 @@ class MitreMapper:
         )
 
         return mapped_results
-
-
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK
-# ==============================================================================
-if __name__ == "__main__":
-    mapper = MitreMapper()
-    mock_anomalies = [
-        "Rogue C2 connection to 103.45.0.0:80 detected on PID 4092 via Volatility.",
-        "Unbacked memory VAD region execution found.",
-    ]
-    results = mapper.map_anomalies(mock_anomalies)
-    print(json.dumps(results, indent=4))

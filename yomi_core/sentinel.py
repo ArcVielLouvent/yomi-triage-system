@@ -3,6 +3,8 @@ import json
 import os
 import sys
 import re
+import threading
+import traceback
 
 # Append root directory to sys.path to ensure absolute imports function correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -14,143 +16,164 @@ from yomi_engine.telemetry import TelemetryEngine
 from yomi_engine.mitre_mapper import MitreMapper
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v3.0)
-# Purpose: Adaptive polling daemon. Operates at extreme efficiency during
-#          peacetime, escalates to hyper-scan upon threat detection.
-#          Acts as the Event-Driven trigger for the Zero-Prompt AI Engine.
-# ==============================================================================
+# YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v4.0)
+# Purpose: Event-driven sentinel with adaptive polling, real host telemetry,
+#          and direct integration into the AI triage pipeline.
+# ============================================================================== 
 
 
 class SentinelDaemon:
     def __init__(self):
-        # Initialize the interconnected triage engines
         self.swarm = SwarmOrchestrator()
         self.hunter = OmniVectorHunter()
         self.router = YomiRouter()
         self.telemetry = TelemetryEngine()
 
-        self.threat_level = "SAFE"  # Operational States: SAFE, ESCALATED, CRITICAL
+        self.threat_level = "SAFE"  # SAFE, ESCALATED, CRITICAL
         self.is_running = False
+        self._lock = threading.Lock()
+        self._wake_event = threading.Event()
+        self._cycle_count = 0
 
     def _get_polling_interval(self) -> float:
-        """
-        Calculates the adaptive polling rate based on current threat conditions.
-        Ensures <1% CPU utilization during SAFE state.
-        """
         if self.threat_level == "SAFE":
-            return 5.0  # Standard Patrol: 5 seconds
-        elif self.threat_level == "ESCALATED":
-            return 1.0  # Heightened Awareness: 1 second
-        else:
-            return 0.1  # CRITICAL: Hyper-Scan mode (100ms)
+            return 5.0
+        if self.threat_level == "ESCALATED":
+            return 1.0
+        return 0.2
+
+    def _load_average(self) -> float:
+        try:
+            return os.getloadavg()[0]
+        except Exception:
+            return 0.0
+
+    def _free_memory_percent(self) -> float:
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as meminfo:
+                total = None
+                free = None
+                available = None
+                for line in meminfo:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        available = int(line.split()[1])
+                    if total and available:
+                        break
+                if total and available:
+                    return available / total * 100.0
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        return 0.0
+
+    def _score_threat(self, anomalies: list, host_metrics: dict) -> str:
+        if anomalies:
+            if any("c2" in a.lower() or "ransom" in a.lower() or "credential" in a.lower() for a in anomalies):
+                return "CRITICAL"
+            return "ESCALATED"
+
+        if host_metrics["load"] > 3.0 or host_metrics["free_memory_pct"] < 20.0:
+            return "ESCALATED"
+
+        return "SAFE"
 
     def _extract_pid_from_anomaly(self, anomalies: list) -> int:
-        """Dynamically extracts the target PID from Swarm text reports."""
         for anomaly in anomalies:
             match = re.search(r"PID\s+(\d+)", anomaly, re.IGNORECASE)
             if match:
                 return int(match.group(1))
-        return 0  # Fallback if no PID is explicitly stated
+        return 0
+
+    def _build_forensic_context(self, target_pid: int, anomaly_data: list, hunt_result: dict, mapped_tactics: list) -> str:
+        return json.dumps(
+            {
+                "incident_type": "autonomous_dfir",
+                "target_pid": target_pid,
+                "anomaly_evidence": anomaly_data,
+                "mitre_mapping": mapped_tactics,
+                "root_cause_trace": hunt_result,
+            },
+            indent=2,
+        )
 
     def _zero_prompt_trigger(self, anomaly_data: list):
-        print(
-            "\n[SENTINEL] [CYBER-PURPLE] Anomaly verified! Engaging Zero-Prompt Engine..."
-        )
+        print("\n[SENTINEL] [CYBER-PURPLE] Anomaly verified! Engaging Zero-Prompt Engine...")
 
         target_pid = self._extract_pid_from_anomaly(anomaly_data)
         incident_id = f"INCIDENT_PID_{target_pid}_{int(time.time())}"
 
         self.telemetry.start_timer(incident_id)
 
-        hunter_context = "No specific PID identified for root-cause hunting."
+        hunt_result = {"status": "SKIPPED", "conclusion": "No target PID available."}
         if target_pid > 0:
             hunt_result = self.hunter.hunt_root_cause(target_pid)
-            hunter_context = hunt_result.get("conclusion", "Root cause unknown.")
 
         mapper = MitreMapper()
-        mitre_tactics = mapper.map_anomalies(anomaly_data)
+        mapped_tactics = mapper.map_anomalies(anomaly_data)
 
-        # Build the structured, hyper-contextual Zero-Prompt
-        forensic_context = f"""
-        [AUTONOMOUS DFIR REPORT]
-        Target PID: {target_pid}
-        
-        1. MITRE ATT&CK MAPPING (IoE Signatures):
-        {json.dumps(mitre_tactics, indent=2)}
-        
-        2. ROOT-CAUSE TRACE:
-        {hunter_context}
-        """
+        forensic_context = self._build_forensic_context(target_pid, anomaly_data, hunt_result, mapped_tactics)
 
         print("[SENTINEL] Routing tactical MITRE context to OpenClaw LLM Gateway...")
-
         triage_result = self.router.execute_autonomous_triage(forensic_context)
 
         executed_action = triage_result.get("status", "UNKNOWN_ACTION")
         self.telemetry.stop_timer(incident_id, executed_action)
 
+    def _collect_host_metrics(self) -> dict:
+        return {
+            "load": self._load_average(),
+            "free_memory_pct": self._free_memory_percent(),
+            "timestamp": time.time(),
+        }
+
     def start(self):
-        """
-        Initializes the infinite background loop.
-        This is the primary heartbeat of the Yomi Triage System.
-        """
         self.is_running = True
-        print(
-            "\n[SENTINEL] [PLASMA BLUE] Infinite Sentinel Loop initialized. Monitoring system state..."
-        )
+        print("\n[SENTINEL] [PLASMA BLUE] Infinite Sentinel Loop initialized. Monitoring system state...")
         print("[SENTINEL] Press Ctrl+C to abort daemon.\n")
 
         try:
             while self.is_running:
+                self._cycle_count += 1
+                host_metrics = self._collect_host_metrics()
+                print(f"[SENTINEL] Cycle {self._cycle_count}: load={host_metrics['load']:.2f}, free_mem={host_metrics['free_memory_pct']:.1f}%")
+
                 try:
-                    # 1. Deploy the Predator Swarm (Micro-Agents)
                     swarm_results = self.swarm.deploy_swarm()
                     anomalies = []
-
                     for report in swarm_results.get("reports", []):
                         findings = report.get("findings", [])
                         if findings:
                             anomalies.extend(findings)
 
-                    # 2. Adaptive Polling Logic & Threat Escalation
+                    new_threat_level = self._score_threat(anomalies, host_metrics)
+                    if new_threat_level != self.threat_level:
+                        print(f"[SENTINEL] Threat state changed from {self.threat_level} to {new_threat_level}.")
+                    self.threat_level = new_threat_level
+
                     if anomalies:
-                        if self.threat_level == "SAFE":
-                            print(
-                                "\n[SENTINEL] [BLOOD RED] Threat detected by Swarm! Escalating to CRITICAL mode."
-                            )
-                            self.threat_level = "CRITICAL"
-
-                        # Trigger the full AI analysis pipeline
+                        if self.threat_level == "CRITICAL":
+                            print("[SENTINEL] [BLOOD RED] Critical threat posture engaged.")
                         self._zero_prompt_trigger(anomalies)
+                    elif self.threat_level == "SAFE":
+                        print("[SENTINEL] [PLASMA BLUE] No anomalies detected. Maintaining baseline patrol.")
 
-                        # Reset to escalated mode to monitor for immediate aftershocks
-                        self.threat_level = "ESCALATED"
-                    else:
-                        if self.threat_level != "SAFE":
-                            print(
-                                "\n[SENTINEL] [PLASMA BLUE] System clear. Returning to SAFE mode baseline."
-                            )
-                        self.threat_level = "SAFE"
+                except Exception as exc:
+                    print("\n[SENTINEL] [VOID BLACK] Internal Loop Error Recovered:")
+                    traceback.print_exc()
 
-                    # 3. Dynamic Sleep (Resource Management)
-                    time.sleep(self._get_polling_interval())
-
-                except Exception as e:
-                    print(
-                        f"\n[SENTINEL] [VOID BLACK] Internal Loop Error Recovered: {str(e)}"
-                    )
-                    time.sleep(5)
+                interval = self._get_polling_interval()
+                print(f"[SENTINEL] Sleeping for {interval:.2f} seconds before next scan.\n")
+                if self._wake_event.wait(timeout=interval):
+                    self._wake_event.clear()
 
         except KeyboardInterrupt:
-            print(
-                "\n[SENTINEL] [VOID BLACK] Sentinel Loop manually terminated by Commander."
-            )
+            print("\n[SENTINEL] [VOID BLACK] Sentinel Loop manually terminated by Commander.")
             self.is_running = False
 
 
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK
-# ==============================================================================
 if __name__ == "__main__":
     sentinel = SentinelDaemon()
     sentinel.start()

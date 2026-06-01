@@ -36,32 +36,25 @@ class MindReaderDecompiler:
         # 1. Execute Type-Safe Radare2 Wrapper
         r2_result = self.arsenal.run_radare2_analysis(binary_path)
 
-        if r2_result.get("status") not in ["SUCCESS", "MOCK_SUCCESS"]:
-            error_msg = f"Radare2 decompilation failed: {r2_result.get('reason')}"
+        if r2_result.get("status") != "SUCCESS":
+            error_msg = f"Radare2 decompilation failed: {r2_result.get('error', r2_result.get('reason', 'unknown'))}"
             self.audit.record_action("MINDREADER", "DECOMPILATION_ERROR", error_msg)
             return {"status": "ERROR", "message": error_msg}
 
         assembly_output = r2_result.get("output", "")
         print(
-            f"[YOMI-MINDREADER] [CYBER-PURPLE] Assembly logic extracted successfully. Routing to OpenClaw AI..."
+            f"[YOMI-MINDREADER] [CYBER-PURPLE] Assembly logic extracted successfully. Performing heuristic profiling..."
         )
 
-        # 2. Assemble the profiling prompt for the LLM
         profiling_context = f"""
         [AUTONOMOUS REVERSE ENGINEERING TASK]
         Objective: Profile the Threat Actor's psychology, skill level, and methodology.
         Target PID: {target_pid}
         Radare2 Extracted Assembly & Strings:
         {assembly_output}
-        
-        Analyze the code structure. Is it a script-kiddie using off-the-shelf tools, 
-        or an advanced persistent threat (APT) using custom obfuscation?
         """
 
-        # 3. Request LLM Analysis
-        # In a live environment, this uses a specific prompt template via OpenClaw.
-        # Here we simulate the LLM's psychological assessment based on assembly heuristics.
-        ai_profile_response = self._simulate_llm_profiling(assembly_output)
+        ai_profile_response = self._derive_profile_from_assembly(assembly_output)
 
         self.audit.record_action(
             "MINDREADER",
@@ -70,7 +63,6 @@ class MindReaderDecompiler:
         )
         print(f"[YOMI-MINDREADER] [PLASMA BLUE] Hacker psychology profile generated.")
 
-        # Feed the generated profile BACK into the Omni-Library database
         new_threat_intel = {
             "target": f"Auto-Learned_Threat_PID_{target_pid}",
             "description": f"Autonomously profiled by Mind-Reader: {ai_profile_response['methodology']}",
@@ -100,48 +92,42 @@ class MindReaderDecompiler:
             "hacker_profile": ai_profile_response,
         }
 
-    def _simulate_llm_profiling(self, assembly_code: str) -> dict:
-        """Mocks the LLM's response to the psychological profiling prompt."""
-        time.sleep(2)  # Simulating LLM thinking time
-
-        if "socket" in assembly_code.lower() or "103.45.0.0" in assembly_code:
+    def _derive_profile_from_assembly(self, assembly_code: str) -> dict:
+        if not assembly_code:
             return {
-                "skill_level": "Intermediate to Advanced (APT Behavior)",
-                "methodology": "Custom C2 beaconing. The attacker favors stealth and lateral movement over immediate destruction.",
-                "psychology": "Calculated and patient. The code uses stripped symbols, indicating a deliberate attempt to frustrate forensic analysts.",
+                "skill_level": "Unknown",
+                "methodology": "No assembly output available for profiling.",
+                "psychology": "Data insufficient for behavioral classification.",
+                "mitre_tactics": ["T1027 (Obfuscated Files or Information)"],
+            }
+
+        normalized = assembly_code.lower()
+        if "socket" in normalized or "connect" in normalized or "103.45.0.0" in normalized:
+            return {
+                "skill_level": "Advanced (APT Behavior)",
+                "methodology": "Network-centric C2 payload with stealth and persistence mechanisms.",
+                "psychology": "Deliberate and patient; designed to evade analysis and maintain long-term access.",
                 "mitre_tactics": [
                     "T1055 (Process Injection)",
                     "T1071 (Application Layer Protocol)",
+                    "T1027 (Obfuscated Files or Information)",
                 ],
             }
-        else:
+
+        if "call" in normalized and "exec" in normalized and ("cmd" in normalized or "powershell" in normalized):
             return {
-                "skill_level": "Novice (Script Kiddie)",
-                "methodology": "Unobfuscated standard reverse shell payload.",
-                "psychology": "Opportunistic. Looking for quick wins rather than long-term persistence.",
-                "mitre_tactics": ["T1059 (Command and Scripting Interpreter)"],
+                "skill_level": "Intermediate",
+                "methodology": "Script-like payload favoring command execution and lateral movement.",
+                "psychology": "Opportunistic with moderate obfuscation; likely executed by an experienced intruder.",
+                "mitre_tactics": [
+                    "T1059 (Command and Scripting Interpreter)",
+                    "T1086 (PowerShell)",
+                ],
             }
 
-
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK
-# ==============================================================================
-if __name__ == "__main__":
-    print("\n[+] Powering up the Mind-Reader Decompiler...")
-    decompiler = MindReaderDecompiler()
-
-    # Path to the malware previously secured by the Lazarus Chamber
-    mock_binary_path = "/workspaces/yomi-triage-system/yomi_data/lazarus_chamber/isolated_target_4092_mock.bin"
-
-    result = decompiler.decompile_and_profile(mock_binary_path, 4092)
-
-    if result["status"] == "SUCCESS":
-        profile = result["hacker_profile"]
-        print("\n" + "=" * 60)
-        print("[THREAT ACTOR PSYCHOLOGICAL PROFILE]")
-        print("=" * 60)
-        print(f"Skill Level  : {profile['skill_level']}")
-        print(f"Methodology  : {profile['methodology']}")
-        print(f"Psychology   : {profile['psychology']}")
-        print(f"MITRE Tactics: {', '.join(profile['mitre_tactics'])}")
-        print("=" * 60 + "\n")
+        return {
+            "skill_level": "Novice",
+            "methodology": "Simple payload with limited obfuscation and direct system calls.",
+            "psychology": "Opportunistic and fast-moving. Likely a less sophisticated attacker.",
+            "mitre_tactics": ["T1059 (Command and Scripting Interpreter)"],
+        }

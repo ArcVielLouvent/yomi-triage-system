@@ -1,6 +1,8 @@
-import subprocess
 import os
+import subprocess
 import sys
+import tempfile
+from typing import Tuple
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -8,18 +10,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - SIFT Toolkit (Elite 5 Arsenal)
-# Purpose: Type-Safe Python wrappers for executing SIFT forensics tools.
-#          Enforces Anti-Spoliation by strictly defining allowed commands.
+# YOMI TRIAGE SYSTEM: MCP Vault - SIFT Toolkit (Expanded Arsenal)
+# Purpose: Type-safe forensic wrappers around SIFT / incident response tools.
+#          Explicit command lists, path validation, and real toolchain detection.
 # ==============================================================================
 
 
 class SiftArsenal:
     def __init__(self):
         self.os_bridge = OSBridge()
-        # Dependency injection complete. Mock status is natively handled by OSBridge.
 
-    def _validate_target_path(self, path: str, allow_block_device: bool = False) -> tuple[bool, str]:
+    def _validate_target_path(self, path: str, allow_block_device: bool = False) -> Tuple[bool, str]:
         if not isinstance(path, str) or not path:
             return False, "Invalid path supplied for forensic tool."
         if not os.path.isabs(path):
@@ -32,29 +33,36 @@ class SiftArsenal:
             return False, f"Target path is not a regular file: {path}"
         return True, ""
 
-    def _run_subprocess(self, command_list: list, tool_name: str) -> dict:
-        """
-        Executes a command safely without shell=True to prevent injection.
-        """
+    def _validate_tool(self, tool_name: str) -> Tuple[bool, str]:
+        path = self.os_bridge.get_tool_path(tool_name)
+        if not path:
+            return False, f"{tool_name} is unavailable on this host. Install the SIFT Workstation toolchain or add {tool_name} to PATH."
+        return True, path
+
+    def _run_subprocess(self, command_list: list[str], tool_name: str, timeout: int = 60) -> dict:
         try:
-            print(f"\n[YOMI-ARSENAL] Executing {tool_name} constraint protocol...")
+            print(f"\n[YOMI-ARSENAL] Executing {tool_name}: {' '.join(command_list)}")
             result = subprocess.run(
                 command_list,
                 capture_output=True,
                 text=True,
-                timeout=30,  # Prevent hanging processes
+                timeout=timeout,
             )
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
 
             if result.returncode == 0:
-                # Limit output to 1000 chars for LLM context window stability
                 return {
                     "status": "SUCCESS",
                     "tool": tool_name,
-                    "output": result.stdout[:1000],
+                    "output": stdout[:2000],
                 }
-            else:
-                return {"status": "ERROR", "tool": tool_name, "error": result.stderr}
 
+            return {
+                "status": "ERROR",
+                "tool": tool_name,
+                "error": stderr or stdout or f"{tool_name} returned {result.returncode}",
+            }
         except FileNotFoundError:
             return {
                 "status": "ERROR",
@@ -65,136 +73,329 @@ class SiftArsenal:
             return {
                 "status": "ERROR",
                 "tool": tool_name,
-                "error": f"{tool_name} execution timed out.",
+                "error": f"{tool_name} execution timed out after {timeout}s.",
             }
-        except Exception as e:
-            return {"status": "ERROR", "tool": tool_name, "error": str(e)}
-
-    # -------------------------------------------------------------------------
-    # 1. VOLATILITY 3 WRAPPER (Memory Forensics)
-    # -------------------------------------------------------------------------
-    def run_volatility_netscan(self, memory_dump_path: str) -> dict:
-        """
-        Type-Safe execution of Volatility netscan to find rogue C2 connections.
-        """
-        if self.os_bridge.is_mock_mode():
-            print(
-                "[YOMI-ARSENAL] [MOCK MODE] Simulating Volatility netscan for development..."
-            )
+        except Exception as exc:
             return {
-                "status": "MOCK_SUCCESS",
-                "tool": "volatility_netscan",
-                "output": "Offset(V)  Local Address  Foreign Address  State  PID  Owner\n0x9812  10.0.0.5:4444  103.45.0.0:80  ESTABLISHED  4092  sshd",
+                "status": "ERROR",
+                "tool": tool_name,
+                "error": str(exc),
             }
 
+    def _run_pipe(self, left_cmd: list[str], right_cmd: list[str], tool_name: str, timeout: int = 60) -> dict:
+        try:
+            left = subprocess.Popen(left_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            right = subprocess.Popen(
+                right_cmd,
+                stdin=left.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            left.stdout.close()
+            stdout, stderr = right.communicate(timeout=timeout)
+
+            if right.returncode == 0:
+                return {
+                    "status": "SUCCESS",
+                    "tool": tool_name,
+                    "output": stdout.strip()[:2000],
+                }
+            return {
+                "status": "ERROR",
+                "tool": tool_name,
+                "error": stderr.strip() or stdout.strip() or f"{tool_name} returned {right.returncode}",
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "ERROR",
+                "tool": tool_name,
+                "error": f"{tool_name} timed out after {timeout}s.",
+            }
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "tool": tool_name,
+                "error": str(exc),
+            }
+
+    # -------------------------------------------------------------------------
+    # VOLATILITY 3 WRAPPERS (Memory Forensics)
+    # -------------------------------------------------------------------------
+    def run_volatility_pslist(self, memory_dump_path: str) -> dict:
         is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
         if not is_valid:
-            return {"status": "ERROR", "tool": "volatility", "error": error}
+            return {"status": "ERROR", "tool": "volatility_pslist", "error": error}
 
-        cmd = ["vol.py", "-f", memory_dump_path, "windows.netscan.NetScan"]
-        return self._run_subprocess(cmd, "volatility")
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {"status": "ERROR", "tool": "volatility_pslist", "error": vol_path}
+
+        cmd = [vol_path, "-f", memory_dump_path, "windows.pslist.PsList"]
+        return self._run_subprocess(cmd, "volatility_pslist")
+
+    def run_volatility_netscan(self, memory_dump_path: str) -> dict:
+        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility_netscan", "error": error}
+
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {"status": "ERROR", "tool": "volatility_netscan", "error": vol_path}
+
+        cmd = [vol_path, "-f", memory_dump_path, "windows.netscan.NetScan"]
+        return self._run_subprocess(cmd, "volatility_netscan")
+
+    def run_volatility_cmdline(self, memory_dump_path: str) -> dict:
+        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility_cmdline", "error": error}
+
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {"status": "ERROR", "tool": "volatility_cmdline", "error": vol_path}
+
+        cmd = [vol_path, "-f", memory_dump_path, "windows.cmdline.CmdLine"]
+        return self._run_subprocess(cmd, "volatility_cmdline")
+
+    def run_volatility_yarascan(self, memory_dump_path: str, yara_rules_path: str) -> dict:
+        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility_yarascan", "error": error}
+
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {"status": "ERROR", "tool": "volatility_yarascan", "error": vol_path}
+
+        if not os.path.isfile(yara_rules_path):
+            return {"status": "ERROR", "tool": "volatility_yarascan", "error": f"YARA rules file not found: {yara_rules_path}"}
+
+        cmd = [vol_path, "-f", memory_dump_path, "windows.yarascan.YaraScan", "--yara-file", yara_rules_path]
+        return self._run_subprocess(cmd, "volatility_yarascan")
 
     # -------------------------------------------------------------------------
-    # 2. RADARE2 WRAPPER (Binary Decompilation / Mind-Reader)
+    # RADARE2 WRAPPER (Static/Binary Analysis)
     # -------------------------------------------------------------------------
     def run_radare2_analysis(self, binary_path: str) -> dict:
-        """
-        Type-Safe execution of Radare2 to extract strings and assembly intel.
-        """
-        if self.os_bridge.is_mock_mode():
-            print(
-                "[YOMI-ARSENAL] [MOCK MODE] Simulating Radare2 Decompilation for development..."
-            )
-            return {
-                "status": "MOCK_SUCCESS",
-                "tool": "radare2",
-                "output": "0x00401000  call sym.imp.socket\n0x00401005  push str.103.45.0.0\n0x0040100a  call sym.imp.connect",
-            }
-
         is_valid, error = self._validate_target_path(binary_path)
         if not is_valid:
             return {"status": "ERROR", "tool": "radare2", "error": error}
 
-        cmd = ["r2", "-q", "-c", "iz", binary_path]
+        enabled, r2_path = self._validate_tool("radare2")
+        if not enabled:
+            return {"status": "ERROR", "tool": "radare2", "error": r2_path}
+
+        cmd = [r2_path, "-q", "-c", "aaa;iz;q", binary_path]
         return self._run_subprocess(cmd, "radare2")
 
     # -------------------------------------------------------------------------
-    # 3. PLASO WRAPPER (Timeline Forensics)
+    # PLASO / LOG2TIMELINE WRAPPER (Timeline Forensics)
     # -------------------------------------------------------------------------
-    def run_plaso_timeline(self, target_drive_path: str) -> dict:
-        """Type-Safe execution of Log2Timeline to build temporal super-timelines."""
-        if self.os_bridge.is_mock_mode():
-            print(
-                "[YOMI-ARSENAL] [MOCK MODE] Simulating Plaso Log2Timeline generation..."
-            )
-            return {
-                "status": "MOCK_SUCCESS",
-                "tool": "plaso",
-                "output": "2026-05-30T12:00:01Z,EVTX,Security,4624,Logon Success,User: Hacker",
-            }
-
-        # Safe array command, prevents shell injection
+    def run_plaso_timeline(self, target_drive_path: str, output_path: str = "/tmp/timeline.plaso") -> dict:
         is_valid, error = self._validate_target_path(target_drive_path, allow_block_device=True)
         if not is_valid:
-            return {"status": "ERROR", "tool": "plaso", "error": error}
+            return {"status": "ERROR", "tool": "plaso_timeline", "error": error}
 
-        cmd = [
-            "log2timeline.py",
-            "--parsers",
-            "win7",
-            "/tmp/timeline.plaso",
-            target_drive_path,
-        ]
-        return self._run_subprocess(cmd, "plaso")
+        enabled, plaso_path = self._validate_tool("log2timeline")
+        if not enabled:
+            return {"status": "ERROR", "tool": "plaso_timeline", "error": plaso_path}
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        cmd = [plaso_path, "--parsers", "win7,raw", output_path, target_drive_path]
+        return self._run_subprocess(cmd, "plaso_timeline", timeout=300)
 
     # -------------------------------------------------------------------------
-    # 4. THE SLEUTH KIT WRAPPER (Disk & Hidden Artifacts)
+    # THE SLEUTH KIT WRAPPERS
     # -------------------------------------------------------------------------
     def run_tsk_fls(self, image_path: str) -> dict:
-        """Type-Safe execution of TSK 'fls' to recover deleted files/MFT entries."""
-        if self.os_bridge.is_mock_mode():
-            print("[YOMI-ARSENAL] [MOCK MODE] Simulating TSK deleted file recovery...")
-            return {
-                "status": "MOCK_SUCCESS",
-                "tool": "tsk",
-                "output": "d/d * 1234: /Windows/System32/config/SAM\nr/r * 9999: /Temp/mimikatz.exe",
-            }
-
         is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
         if not is_valid:
-            return {"status": "ERROR", "tool": "tsk", "error": error}
+            return {"status": "ERROR", "tool": "tsk_fls", "error": error}
 
-        cmd = ["fls", "-r", "-p", image_path]
-        return self._run_subprocess(cmd, "tsk")
+        enabled, fls_path = self._validate_tool("fls")
+        if not enabled:
+            return {"status": "ERROR", "tool": "tsk_fls", "error": fls_path}
+
+        cmd = [fls_path, "-r", "-p", image_path]
+        return self._run_subprocess(cmd, "tsk_fls")
+
+    def run_tsk_img_stat(self, image_path: str) -> dict:
+        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "tsk_img_stat", "error": error}
+
+        enabled, img_stat_path = self._validate_tool("img_stat")
+        if not enabled:
+            return {"status": "ERROR", "tool": "tsk_img_stat", "error": img_stat_path}
+
+        cmd = [img_stat_path, image_path]
+        return self._run_subprocess(cmd, "tsk_img_stat")
+
+    def run_tsk_icat(self, image_path: str, inode_id: str, output_path: str = None) -> dict:
+        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "tsk_icat", "error": error}
+
+        enabled, icat_path = self._validate_tool("icat")
+        if not enabled:
+            return {"status": "ERROR", "tool": "tsk_icat", "error": icat_path}
+
+        if not inode_id:
+            return {"status": "ERROR", "tool": "tsk_icat", "error": "inode_id is required for icat output."}
+
+        if output_path:
+            output_dir = os.path.dirname(output_path)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8", errors="ignore") as outfile:
+                result = subprocess.run([icat_path, image_path, inode_id], stdout=outfile, stderr=subprocess.PIPE, text=True, timeout=120)
+                if result.returncode == 0:
+                    return {"status": "SUCCESS", "tool": "tsk_icat", "output": f"Extracted inode {inode_id} to {output_path}"}
+                return {"status": "ERROR", "tool": "tsk_icat", "error": result.stderr.strip()}
+
+        cmd = [icat_path, image_path, inode_id]
+        return self._run_subprocess(cmd, "tsk_icat", timeout=120)
 
     # -------------------------------------------------------------------------
-    # 5. TSHARK WRAPPER (Network PCAP Analysis)
+    # NETWORK & PCAP ANALYSIS WRAPPERS
     # -------------------------------------------------------------------------
     def run_tshark_pcap(self, pcap_path: str) -> dict:
-        """Type-Safe execution of TShark to detect C2 Beaconing in network captures."""
-        if self.os_bridge.is_mock_mode():
-            print("[YOMI-ARSENAL] [MOCK MODE] Simulating TShark PCAP Analysis...")
-            return {
-                "status": "MOCK_SUCCESS",
-                "tool": "tshark",
-                "output": "10.0.0.5 -> 103.45.0.0 HTTP GET /payload.bin\n10.0.0.5 -> 8.8.8.8 DNS Standard query A c2-server.evil.com",
-            }
-
         is_valid, error = self._validate_target_path(pcap_path)
         if not is_valid:
             return {"status": "ERROR", "tool": "tshark", "error": error}
 
+        enabled, tshark_path = self._validate_tool("tshark")
+        if not enabled:
+            return {"status": "ERROR", "tool": "tshark", "error": tshark_path}
+
         cmd = [
-            "tshark",
+            tshark_path,
             "-r",
             pcap_path,
             "-Y",
-            "http or dns",
+            "http or dns or ssl or tcp.port == 443 or tcp.port == 80",
             "-T",
             "fields",
+            "-e",
+            "frame.number",
             "-e",
             "ip.src",
             "-e",
             "ip.dst",
+            "-e",
+            "_ws.col.Protocol",
+            "-e",
+            "http.host",
+            "-e",
+            "dns.qry.name",
         ]
-        return self._run_subprocess(cmd, "tshark")
+        return self._run_subprocess(cmd, "tshark", timeout=120)
+
+    def run_bulk_extractor(self, target_path: str, output_dir: str = None) -> dict:
+        is_valid, error = self._validate_target_path(target_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "bulk_extractor", "error": error}
+
+        enabled, bulk_path = self._validate_tool("bulk_extractor")
+        if not enabled:
+            return {"status": "ERROR", "tool": "bulk_extractor", "error": bulk_path}
+
+        output_dir = output_dir or os.path.join(tempfile.gettempdir(), "bulk_extractor")
+        os.makedirs(output_dir, exist_ok=True)
+        cmd = [bulk_path, "-o", output_dir, target_path]
+        return self._run_subprocess(cmd, "bulk_extractor", timeout=180)
+
+    def run_strings_grep(self, target_path: str, pattern: str) -> dict:
+        is_valid, error = self._validate_target_path(target_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "strings_grep", "error": error}
+
+        enabled_strings, strings_path = self._validate_tool("strings")
+        enabled_grep, grep_path = self._validate_tool("grep")
+        if not enabled_strings:
+            return {"status": "ERROR", "tool": "strings_grep", "error": strings_path}
+        if not enabled_grep:
+            return {"status": "ERROR", "tool": "strings_grep", "error": grep_path}
+
+        return self._run_pipe([strings_path, target_path], [grep_path, "-i", "-F", pattern], "strings_grep")
+
+    # -------------------------------------------------------------------------
+    # YARA & SIGNATURE SCANNING WRAPPERS
+    # -------------------------------------------------------------------------
+    def run_yara_scan(self, target_path: str, rule_path: str) -> dict:
+        is_valid, error = self._validate_target_path(target_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "yara_scan", "error": error}
+
+        enabled, yara_path = self._validate_tool("yara")
+        if not enabled:
+            return {"status": "ERROR", "tool": "yara_scan", "error": yara_path}
+
+        if not os.path.isfile(rule_path):
+            return {"status": "ERROR", "tool": "yara_scan", "error": f"YARA rule file not found: {rule_path}"}
+
+        cmd = [yara_path, "-s", rule_path, target_path]
+        return self._run_subprocess(cmd, "yara_scan")
+
+    def run_ssdeep(self, target_path: str) -> dict:
+        is_valid, error = self._validate_target_path(target_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "ssdeep", "error": error}
+
+        enabled, ssdeep_path = self._validate_tool("ssdeep")
+        if not enabled:
+            return {"status": "ERROR", "tool": "ssdeep", "error": ssdeep_path}
+
+        cmd = [ssdeep_path, target_path]
+        return self._run_subprocess(cmd, "ssdeep")
+
+    # -------------------------------------------------------------------------
+    # WINDOWS REGISTRY AND FILESYSTEM PARSERS
+    # -------------------------------------------------------------------------
+    def run_reglookup(self, registry_path: str) -> dict:
+        is_valid, error = self._validate_target_path(registry_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "reglookup", "error": error}
+
+        enabled, reglookup_path = self._validate_tool("reglookup")
+        if not enabled:
+            return {"status": "ERROR", "tool": "reglookup", "error": reglookup_path}
+
+        cmd = [reglookup_path, registry_path]
+        return self._run_subprocess(cmd, "reglookup")
+
+    def run_mftparser(self, mft_path: str) -> dict:
+        is_valid, error = self._validate_target_path(mft_path)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "mftparser", "error": error}
+
+        enabled, mftparser_path = self._validate_tool("mftparser")
+        if not enabled:
+            return {"status": "ERROR", "tool": "mftparser", "error": mftparser_path}
+
+        cmd = [mftparser_path, mft_path]
+        return self._run_subprocess(cmd, "mftparser")
+
+    def run_scalpel(self, image_path: str, config_path: str = None, output_dir: str = None) -> dict:
+        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        if not is_valid:
+            return {"status": "ERROR", "tool": "scalpel", "error": error}
+
+        enabled, scalpel_path = self._validate_tool("scalpel")
+        if not enabled:
+            return {"status": "ERROR", "tool": "scalpel", "error": scalpel_path}
+
+        if config_path:
+            if not os.path.isfile(config_path):
+                return {"status": "ERROR", "tool": "scalpel", "error": f"Scalpel config not found: {config_path}"}
+
+        output_dir = output_dir or os.path.join(tempfile.gettempdir(), "scalpel")
+        os.makedirs(output_dir, exist_ok=True)
+
+        cmd = [scalpel_path, image_path, "-o", output_dir]
+        if config_path:
+            cmd.insert(1, config_path)
+        return self._run_subprocess(cmd, "scalpel", timeout=180)

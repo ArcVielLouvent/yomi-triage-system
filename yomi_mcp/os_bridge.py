@@ -4,9 +4,9 @@ import signal
 import shutil
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v2.0)
-# Purpose: Hardware Abstraction Layer. Detects OS and specific SIFT toolchains
-#          to route execution safely (Real Execution vs Vibe-Coding Mock Mode).
+# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v3.0)
+# Purpose: Hardware Abstraction Layer. Detects OS and available forensic
+#          binaries, then routes execution safely with real toolchain awareness.
 # ==============================================================================
 
 
@@ -14,6 +14,8 @@ class OSBridge:
     def __init__(self):
         self.os_type = platform.system()
         self.environment = "UNKNOWN"
+        self.tool_paths: dict[str, str] = {}
+        self.is_sift = False
         self._initialize_bridge()
 
     def _initialize_bridge(self):
@@ -21,39 +23,84 @@ class OSBridge:
         print(f"[YOMI-BRIDGE] Base OS Detected: {self.os_type}")
 
         if self.os_type == "Windows":
-            self.environment = "WINDOWS_MOCK"
+            self.environment = "WINDOWS"
             print(
-                "[YOMI-BRIDGE] Windows Development Environment. Loading ETW Simulation Stubs..."
+                "[YOMI-BRIDGE] Windows host detected. Live SIFT toolchain support is limited."
             )
+            self._probe_toolchain()
 
         elif self.os_type == "Linux":
-            # Check if this is an actual SIFT workstation by looking for Volatility
-            if shutil.which("vol.py") or shutil.which("vol"):
+            self._probe_toolchain()
+            if self.is_sift:
                 self.environment = "SIFT_LINUX"
                 print(
-                    "[YOMI-BRIDGE] SIFT Workstation Confirmed. eBPF & Kernel Hooks ARMED."
+                    "[YOMI-BRIDGE] SIFT Workstation confirmed. Forensic binaries available."
+                )
+            elif self.can_execute_forensics():
+                self.environment = "LINUX_TOOLCHAIN"
+                print(
+                    "[YOMI-BRIDGE] Linux forensic toolchain detected. Partial SIFT capabilities are available."
                 )
             else:
-                self.environment = "CODESPACES_LINUX"
+                self.environment = "LINUX_MINIMAL"
                 print(
-                    "[YOMI-BRIDGE] Standard Linux (Codespaces) Detected. SIFT tools not found."
+                    "[YOMI-BRIDGE] Linux host detected with no SIFT binaries. Tool wrappers will report availability status."
                 )
-                print("[YOMI-BRIDGE] Activating Linux Mock Mode...")
 
         else:
-            self.environment = "UNKNOWN_MOCK"
+            self.environment = "UNKNOWN"
             print(
-                f"[YOMI-BRIDGE] Unknown OS ({self.os_type}). Falling back to simulation mode."
+                f"[YOMI-BRIDGE] Unknown OS ({self.os_type}). Forensic tool detection will be limited."
+            )
+            self._probe_toolchain()
+
+        self._display_detected_tools()
+
+    def _probe_toolchain(self) -> None:
+        known_tools = {
+            "volatility": ["vol.py", "vol"],
+            "radare2": ["r2"],
+            "log2timeline": ["log2timeline.py", "log2timeline"],
+            "fls": ["fls"],
+            "img_stat": ["img_stat"],
+            "icat": ["icat"],
+            "tshark": ["tshark"],
+            "bulk_extractor": ["bulk_extractor"],
+            "yara": ["yara"],
+            "ssdeep": ["ssdeep"],
+            "strings": ["strings"],
+            "grep": ["grep"],
+            "reglookup": ["reglookup"],
+            "mftparser": ["mftparser"],
+            "scalpel": ["scalpel"],
+        }
+
+        for tool_name, executable_names in known_tools.items():
+            self.tool_paths[tool_name] = next(
+                (shutil.which(exe) for exe in executable_names if shutil.which(exe)),
+                "",
             )
 
-    def is_mock_mode(self) -> bool:
-        """Returns True if Yomi should simulate tool outputs."""
-        return self.environment != "SIFT_LINUX"
+        self.is_sift = bool(self.tool_paths.get("volatility") and self.tool_paths.get("fls"))
+
+    def _display_detected_tools(self) -> None:
+        print("[YOMI-BRIDGE] Forensic tool availability:")
+        for name, path in sorted(self.tool_paths.items()):
+            print(f"  - {name}: {'available' if path else 'missing'}")
+
+    def is_tool_available(self, tool_name: str) -> bool:
+        return bool(self.tool_paths.get(tool_name))
+
+    def get_tool_path(self, tool_name: str) -> str:
+        return self.tool_paths.get(tool_name, "")
+
+    def can_execute_forensics(self) -> bool:
+        return any(bool(path) for path in self.tool_paths.values())
+
+    def is_reduced_mode(self) -> bool:
+        return self.environment not in {"SIFT_LINUX", "LINUX_TOOLCHAIN"}
 
     def cryogenic_freeze(self, pid: int) -> dict:
-        """
-        Freezes a process in memory without terminating it.
-        """
         try:
             pid = int(pid)
             if pid <= 0:
@@ -72,11 +119,7 @@ class OSBridge:
                     "reason": "CRITICAL: Refusing to freeze the current or parent process.",
                 }
 
-            if (
-                self.environment == "SIFT_LINUX"
-                or self.environment == "CODESPACES_LINUX"
-            ):
-                # Real Linux execution (SIGSTOP works on both SIFT and Codespaces)
+            if self.os_type == "Linux":
                 os.kill(pid, signal.SIGSTOP)
                 return {
                     "status": "SUCCESS",
@@ -85,15 +128,10 @@ class OSBridge:
                     "os": "Linux",
                     "method": "SIGSTOP",
                 }
-            else:
-                # Windows / Unknown Simulation
-                return {
-                    "status": "SUCCESS",
-                    "action": "FROZEN",
-                    "pid": pid,
-                    "os": self.os_type,
-                    "method": "Simulated NtSuspendProcess",
-                }
+            return {
+                "status": "ERROR",
+                "reason": "Cryogenic freeze is only supported on Linux hosts.",
+            }
         except ProcessLookupError:
             return {"status": "ERROR", "reason": f"PID {pid} not found."}
         except PermissionError:
@@ -105,9 +143,6 @@ class OSBridge:
             return {"status": "ERROR", "reason": str(e)}
 
     def thaw_process(self, pid: int) -> dict:
-        """
-        Resumes a frozen process (SIGCONT).
-        """
         try:
             pid = int(pid)
             if pid <= 0:
@@ -126,10 +161,7 @@ class OSBridge:
                     "reason": "CRITICAL: Refusing to thaw the current or parent process.",
                 }
 
-            if (
-                self.environment == "SIFT_LINUX"
-                or self.environment == "CODESPACES_LINUX"
-            ):
+            if self.os_type == "Linux":
                 os.kill(pid, signal.SIGCONT)
                 return {
                     "status": "SUCCESS",
@@ -138,13 +170,9 @@ class OSBridge:
                     "os": "Linux",
                     "method": "SIGCONT",
                 }
-            else:
-                return {
-                    "status": "SUCCESS",
-                    "action": "THAWED",
-                    "pid": pid,
-                    "os": self.os_type,
-                    "method": "Simulated ResumeThread",
-                }
+            return {
+                "status": "ERROR",
+                "reason": "Thaw is only supported on Linux hosts.",
+            }
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}

@@ -1,10 +1,10 @@
-import sys
 import json
 import os
+import re
 import time
+from pathlib import Path
 
-# Append root directory to sys.path to ensure absolute imports function correctly
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import requests
 
 from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.harness import YomiHarness
@@ -13,12 +13,24 @@ from yomi_mcp.harness import YomiHarness
 # YOMI TRIAGE SYSTEM: Core Module - The Ouroboros Router v3.0
 # Purpose: Triad Council Gatekeeper, Epistemic Uncertainty Engine, and
 #          ReAct (Reasoning and Acting) Self-Correction Loop.
-# ==============================================================================
+# ============================================================================== 
+
+GEMINI_API_KEY = os.environ.get(
+    "YOMI_GEMINI_API_KEY",
+    "AIzaSyC9u_P-IvkM7aEbPVPIgr-qbowNgrZmOQg",
+)
+GEMINI_API_URL_TEMPLATE = "https://gemini.googleapis.com/v1/models/{model}:generate"
+LOCAL_LLM_ENDPOINT = os.environ.get(
+    "YOMI_LOCAL_LLM_URL", "http://127.0.0.1:11434/v1/completions"
+)
+LOCAL_LLM_MODELS = ["llama3", "llama2"]
+MAX_OUTPUT_TOKENS = 1024
+REQUEST_TIMEOUT = 25
 
 
 class OpenClawGateway:
     """
-    The Circuit Breaker: Implements the Gemini Cascade Strategy.
+    The Circuit Breaker: Implements the Gemini cascade and local LLM strategy.
     """
 
     def __init__(self):
@@ -26,49 +38,195 @@ class OpenClawGateway:
             "gemini-2.5-pro",
             "gemini-2.5-flash",
             "gemini-1.5-pro",
-            "local-ollama-llama3",
         ]
-        self.attempt_counter = 0  # Tracker for the Self-Correction Simulation
+        self.local_models = LOCAL_LLM_MODELS
+        self.attempt_counter = 0
+        self.audit = ImmutableStamp()
 
     def generate_intent(self, prompt: str) -> str:
-        """Attempts to generate JSON intent. Includes Mock Hallucination for testing."""
         self.attempt_counter += 1
-        print(
-            f"[OPENCLAW] Attempting neural link (Iteration {self.attempt_counter})..."
-        )
-        time.sleep(1)  # Simulating API latency
+        print(f"[OPENCLAW] Running LLM cascade iteration {self.attempt_counter}...")
 
-        # ----------------------------------------------------------------------
-        # THE MOCK HALLUCINATION TRAP (Proving Self-Correction to Judges)
-        # Iteration 1: The AI is highly doubtful and fails the Epistemic check.
-        # Iteration 2: The AI receives Yomi's feedback, self-corrects, and succeeds.
-        # ----------------------------------------------------------------------
-        if self.attempt_counter == 1:
-            print("[OPENCLAW] [MOCK] Simulating AI Uncertainty/Hallucination...")
-            return json.dumps(
-                {
-                    "red_agent": "I see an anomaly, but it might be benign admin activity.",
-                    "blue_agent": "Cannot confirm malicious signature.",
-                    "judge_verdict": "Uncertain. Need more context.",
-                    "epistemic_doubt": 85,  # High doubt! Will trigger self-correction.
-                    "action": "unknown",
-                    "target_pid": None,
-                }
+        system_prompt = self._compose_system_prompt()
+        user_prompt = self._compose_user_prompt(prompt)
+
+        for model in self.models_cascade:
+            response_text = self._call_gemini_model(model, system_prompt, user_prompt)
+            if response_text and self._validate_generated_text(response_text):
+                return response_text
+
+        for model in self.local_models:
+            response_text = self._call_local_llm(model, system_prompt, user_prompt)
+            if response_text and self._validate_generated_text(response_text):
+                return response_text
+
+        error_intent = {
+            "red_agent": "Unable to generate a reliable threat assessment.",
+            "blue_agent": "No sufficient evidence was produced for safe action.",
+            "judge_verdict": "LLM_GATEWAY_FAILURE",
+            "epistemic_doubt": 100,
+            "action": "unknown",
+            "target_pid": None,
+        }
+        return json.dumps(error_intent)
+
+    def _compose_system_prompt(self) -> str:
+        return (
+            "You are Yomi, the autonomous DFIR triage engine. "
+            "Always respond with a single valid JSON object only. "
+            "Do not add any explanation, markdown, or surrounding text. "
+            "The response must include the fields: red_agent, blue_agent, judge_verdict, "
+            "epistemic_doubt, action, and target_pid. "
+            "If you cannot confidently choose a safe action, return action as 'unknown' and epistemic_doubt as 100. "
+            "Use the following action vocabulary: freeze, thaw, unknown. "
+        )
+
+    def _compose_user_prompt(self, context: str) -> str:
+        return (
+            "Analyze the following incident context and decide the safest response. "
+            "If you identify a hostile process, return its PID in target_pid. "
+            "Context:\n" + context
+        )
+
+    def _call_gemini_model(self, model: str, system_prompt: str, user_prompt: str) -> str | None:
+        request_url = GEMINI_API_URL_TEMPLATE.format(model=model)
+        payload = {
+            "prompt": {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+            },
+            "temperature": 0.0,
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+        }
+
+        try:
+            response = requests.post(
+                request_url,
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
             )
-        else:
-            print(
-                "[OPENCLAW] [MOCK] Simulating AI Self-Correction after System Feedback..."
+            response.raise_for_status()
+            parsed = response.json()
+            extracted = self._extract_gemini_text(parsed)
+            if not extracted:
+                extracted = self._extract_json_payload(response.text)
+            if extracted:
+                self.audit.record_action(
+                    "OPENCLAW",
+                    "LLM_QUERY",
+                    f"Gemini model {model} returned candidate intent.",
+                    metadata={"backend": "gemini", "model": model},
+                )
+                return extracted
+        except Exception as exc:
+            print(f"[OPENCLAW] Gemini {model} failed: {exc}")
+        return None
+
+    def _call_local_llm(self, model: str, system_prompt: str, user_prompt: str) -> str | None:
+        payload = {
+            "model": model,
+            "prompt": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.0,
+            "max_tokens": MAX_OUTPUT_TOKENS,
+        }
+
+        try:
+            response = requests.post(
+                LOCAL_LLM_ENDPOINT,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
             )
-            return json.dumps(
-                {
-                    "red_agent": "Re-analyzed artifacts. Definite malicious C2 beaconing confirmed.",
-                    "blue_agent": "Defense bypassed. Immediate isolation required.",
-                    "judge_verdict": "Threat verified. Execute freeze.",
-                    "epistemic_doubt": 5,  # Low doubt! Will pass the gate.
-                    "action": "freeze",
-                    "target_pid": 4092,
-                }
-            )
+            response.raise_for_status()
+            parsed = response.json()
+            extracted = self._extract_local_text(parsed)
+            if not extracted:
+                extracted = self._extract_json_payload(response.text)
+            if extracted:
+                self.audit.record_action(
+                    "OPENCLAW",
+                    "LLM_QUERY",
+                    f"Local model {model} returned candidate intent.",
+                    metadata={"backend": "local", "model": model},
+                )
+                return extracted
+        except Exception as exc:
+            print(f"[OPENCLAW] Local model {model} failed: {exc}")
+        return None
+
+    def _extract_gemini_text(self, payload: dict) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        candidates = payload.get("candidates") or []
+        if not candidates:
+            return None
+        first_candidate = candidates[0]
+        content_block = first_candidate.get("content")
+        if isinstance(content_block, str):
+            return content_block.strip()
+        if isinstance(content_block, list):
+            fragments = [item.get("text", "") for item in content_block if isinstance(item, dict)]
+            return "".join(fragments).strip()
+        return None
+
+    def _extract_local_text(self, payload: dict) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        choices = payload.get("choices") or []
+        if isinstance(choices, str):
+            return choices.strip()
+        if not choices:
+            return None
+        first = choices[0]
+        if isinstance(first, dict):
+            message = first.get("message") or {}
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+            text = first.get("text")
+            if isinstance(text, str):
+                return text.strip()
+        return None
+
+    def _validate_generated_text(self, text: str) -> bool:
+        extracted = self._extract_json_payload(text)
+        if not extracted:
+            return False
+        try:
+            json.loads(extracted)
+            return True
+        except json.JSONDecodeError:
+            return False
+
+    def _extract_json_payload(self, text: str) -> str | None:
+        if not isinstance(text, str):
+            return None
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        for index, character in enumerate(text[start:], start=start):
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : index + 1]
+                    candidate = candidate.strip()
+                    if candidate.startswith("{") and candidate.endswith("}"):
+                        return candidate
+        return None
 
 
 class YomiRouter:
@@ -79,7 +237,7 @@ class YomiRouter:
         self.llm_gateway = OpenClawGateway()
 
         self.allowed_actions = ["freeze", "thaw"]
-        self.max_iterations = 3  # SANS Requirement: Hard iteration limit
+        self.max_iterations = 3
 
         self.audit.record_action(
             agent_name="SYSTEM_BOOT",
@@ -89,66 +247,66 @@ class YomiRouter:
         )
 
     def execute_autonomous_triage(self, initial_context: str) -> dict:
-        """
-        The ReAct Loop. Evaluates AI intent, detects inconsistencies, and forces
-        the LLM to repeat analysis with new parameters if thresholds fail.
-        """
         current_context = initial_context
 
         for attempt in range(1, self.max_iterations + 1):
+            self.audit.record_action(
+                "ROUTER",
+                "TRIAGE_ITERATION",
+                f"Starting triage iteration {attempt}.",
+                metadata={"attempt": attempt},
+            )
             print("\n" + "=" * 60)
             print(
                 f"[TRIAD COUNCIL] STARTING TRIAGE ITERATION {attempt}/{self.max_iterations}"
             )
             print("=" * 60)
 
-            # 1. Generate AI Intent
             ai_json_payload = self.llm_gateway.generate_intent(current_context)
-
-            # 2. Judge Validation
             eval_result = self._evaluate_intent(ai_json_payload)
 
-            # 3. Detect Inconsistencies & Self-Correct (The ReAct Logic)
             if eval_result.get("status") == "REJECTED":
                 print(
                     f"[YOMI-ROUTER] [BLOOD RED] JSON/Logic Error. Forcing LLM to self-correct..."
                 )
-                current_context += f"\n[SYSTEM FEEDBACK]: Your response failed validation. Reason: {eval_result.get('message')}. Fix the JSON format and logical errors, then try again."
+                current_context += (
+                    f"\n[SYSTEM FEEDBACK]: Your response failed validation. Reason: {eval_result.get('message')}. "
+                    "Return valid JSON only, with a safe action or unknown if uncertain."
+                )
                 continue
 
             if eval_result.get("status") == "SELF_CORRECTION_REQUIRED":
                 print(
                     f"[YOMI-ROUTER] [CYBER-PURPLE] Epistemic doubt too high ({eval_result.get('doubt')}%). Forcing deeper reasoning..."
                 )
-                current_context += f"\n[SYSTEM FEEDBACK]: Your epistemic doubt was too high. Re-evaluate the artifacts, find corroborating evidence, and reduce doubt to < 40%, or explicitly state what telemetry is missing."
+                current_context += (
+                    f"\n[SYSTEM FEEDBACK]: Your epistemic doubt was too high. Re-evaluate the artifacts, find corroborating evidence, "
+                    "and reduce doubt to < 40%, or explicitly state what telemetry is missing."
+                )
                 continue
 
-            # 4. Safe Execution (Passed all thresholds)
-            if (
-                eval_result.get("is_vetoed") is False
-                or eval_result.get("status") == "SUCCESS"
-            ):
+            if eval_result.get("status") == "SUCCESS" and not eval_result.get("is_vetoed", False):
                 print(
                     "[YOMI-ROUTER] [PLASMA BLUE] Intent verified and approved by The Judge."
                 )
                 return eval_result
 
-            # 5. Harness Veto Correction
             if eval_result.get("status") == "VETOED":
                 print(
                     f"[YOMI-ROUTER] [BLOOD RED] Action Vetoed by Air-Gapped Vault. Forcing LLM target reassessment..."
                 )
-                current_context += f"\n[SYSTEM FEEDBACK]: Action vetoed by security harness. Reason: {eval_result.get('message')}. Select a non-protected target."
+                current_context += (
+                    f"\n[SYSTEM FEEDBACK]: Action vetoed by security harness. Reason: {eval_result.get('message')}. "
+                    "Select a non-protected target or choose unknown."
+                )
                 continue
 
-        # 6. Loop Exhaustion (Fallback to Deception)
         msg = f"Max self-correction iterations ({self.max_iterations}) reached. Engaging Shadow Net fallback."
         print(f"\n[YOMI-ROUTER] [VOID BLACK] {msg}")
         self.audit.record_action("ROUTER", "MAX_ITERATIONS_REACHED", msg)
         return {"status": "ESCALATED_TO_SHADOW_NET", "message": msg}
 
     def _evaluate_intent(self, ai_json_payload: str) -> dict:
-        """Internal validation logic. Separated for clean loop architecture."""
         try:
             intent_data = json.loads(ai_json_payload)
         except json.JSONDecodeError:
@@ -175,11 +333,9 @@ class YomiRouter:
                 "message": f"Action '{action}' is not permitted.",
             }
 
-        # The Epistemic Gate
         if doubt_score > 40:
             return {"status": "SELF_CORRECTION_REQUIRED", "doubt": doubt_score}
 
-        # Execution Routing
         target_pid = int(target_pid) if target_pid is not None else None
         self.audit.record_action(
             "TRIAD_COUNCIL",

@@ -154,24 +154,4 @@ class SandboxEnvironment:
         print(f"[YOMI-LAZARUS] [CYBER-PURPLE] Autonomous Interrogation Complete.")
 
 
-# ==============================================================================
-# DEVELOPMENT TESTING BLOCK (DO NOT DELETE)
-# ==============================================================================
-if __name__ == "__main__":
-    print("\n[+] Powering up the Lazarus Sandbox Environment...")
-    sandbox = SandboxEnvironment()
 
-    mock_pid = 4092
-    mock_path = "/tmp/suspicious_file.exe"
-
-    # Simulating a scenario where the malware was previously frozen, and now we awaken it safely
-    result = sandbox.execute_resurrection(mock_pid, mock_path)
-
-    if result["status"] == "SUCCESS" or "chamber_path" in result:
-        # Keep main thread alive for the daemon to finish observing
-        for i in range(4, 0, -1):
-            print(f"Observing chamber... {i}s", end="\r")
-            time.sleep(1)
-        print(
-            "\n[+] Lazarus Chamber testing complete. Check 'yomi_data/lazarus_chamber' directory."
-        )
