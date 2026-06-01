@@ -1,6 +1,6 @@
 <div align="center">
   <h1>YOMI TRIAGE SYSTEM</h1>
-  <p><b>Autonomous DFIR Engine for SANS Hackathon Integration</b></p>
+  <p><b>Autonomous DFIR Engine</b></p>
   <p><i>Real forensic toolchain hardening, MCP-safe LLM orchestration, and evidence-aware containment.</i></p>
 </div>
 
@@ -34,9 +34,9 @@ Yomi intentionally separates the forensic ingestion layer, AI reasoning layer, a
 ### 2.1 System Architecture
 
 ```mermaid
-graph LR
+graph LR;
     A[Host / Artifact Source] --> B[OSBridge / Tool Discovery]
-    B --> C[SiftArsenal (Tool Wrappers)]
+    B --> C[SiftArsenal - Tool Wrappers]
     C --> D[MCP Server Schema Registry]
     D --> E[OpenClaw Gateway (Gemini + Local LLM)]
     E --> F[Yomi Router / Triad Council]
@@ -48,7 +48,7 @@ graph LR
 ### 2.2 Malware Lifecycle Workflow
 
 ```mermaid
-sequenceDiagram
+sequenceDiagram;
     participant Malware
     participant Host as Victim Host
     participant Sentinel
@@ -73,7 +73,7 @@ sequenceDiagram
 ### 2.3 Threat Resolution and Fallback Paths
 
 ```mermaid
-flowchart TD
+flowchart TD;
     A[Anomaly Detected] --> B{Memory Dump Available?}
     B -- Yes --> C[Volatility / Netscan]
     B -- No --> D[Live Socket Analysis]
