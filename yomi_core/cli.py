@@ -134,7 +134,6 @@ def main():
         sys.exit(0)
 
     # 2. AUTONOMOUS TRIAGE MODE
-    # 2. AUTONOMOUS TRIAGE MODE
     if args.auto:
         # Check Air-Gapped Status (Internet connectivity)
         print("[*] Checking network state for Air-Gapped deployment...")
@@ -142,7 +141,7 @@ def main():
 
         # Fire up the Ghost Protocol (Camouflage & Ouroboros Daemon)
         ghost = GhostProtocol()
-        ghost.engage_camouflage()  # [!] REVISI: Mengubah deploy_ menjadi engage_
+        ghost.engage_camouflage()
 
         # Launch Sentinel Loop in the background
         sentinel_thread = threading.Thread(target=start_sentinel_thread, daemon=True)

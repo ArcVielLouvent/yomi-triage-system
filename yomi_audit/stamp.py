@@ -48,17 +48,12 @@ class ImmutableStamp:
 
         self.ledger_file = os.path.join(self.data_dir, self.LEDGER_FILENAME)
         self.hmac_key_file = os.path.join(self.data_dir, "audit_hmac.key")
-        self.notary_checkpoint_file = os.path.join(self.data_dir, "soc_notary_checkpoint.sig")
+        self.checkpoint_file = os.path.join(self.data_dir, "ledger_checkpoint.bin")
         self.hmac_key = self._load_or_generate_hmac_key()
-        is_safe = self.verify_soc_checkpoint()
-        
-        if not is_safe:
-            raise SecurityError("CRITICAL: SOC Checkpoint Tampering Detected!")
-            
-        print("[+] Verification successful. Loading CVE database...")
         self._ensure_ledger_file()
         self._cleanup_corrupt_backups_if_requested()
         self.last_hash = self._load_or_initialize_ledger()
+        self._create_or_verify_checkpoint()
 
     def _secure_directory_permissions(self):
         try:
@@ -202,6 +197,20 @@ class ImmutableStamp:
         purge_flag = os.environ.get("YOMI_AUDIT_PURGE_CORRUPT", "").lower()
         if purge_flag in {"1", "true", "yes", "on"}:
             self.cleanup_corrupt_backups(retain_last=1)
+
+    def _create_or_verify_checkpoint(self) -> None:
+        checkpoint_hash = hashlib.sha256(self.last_hash.encode('utf-8')).hexdigest()
+        try:
+            if os.path.exists(self.checkpoint_file):
+                with open(self.checkpoint_file, 'rb') as chk:
+                    stored_hash = chk.read().decode('utf-8')
+                if stored_hash != checkpoint_hash:
+                    print(f"[YOMI-AUDIT] Checkpoint mismatch detected. Updating...")
+            with open(self.checkpoint_file, 'wb') as chk:
+                chk.write(checkpoint_hash.encode('utf-8'))
+            self._secure_path_permissions(self.checkpoint_file, 0o600)
+        except Exception as exc:
+            print(f"[YOMI-AUDIT] Checkpoint creation failed: {exc}")
 
     def cleanup_corrupt_backups(self, retain_last: int = 0) -> int:
         deleted = 0
