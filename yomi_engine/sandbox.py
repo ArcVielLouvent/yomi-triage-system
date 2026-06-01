@@ -74,8 +74,7 @@ class SandboxEnvironment:
     def execute_resurrection(self, target_pid: int, binary_path: str) -> dict:
         """
         The core Lazarus Protocol.
-        1. Secures the binary in the chamber.
-        2. Thaws (Resumes) the previously frozen PID to observe its dormant behavior.
+        Secures the binary in the chamber.
         """
         print(
             f"\n[YOMI-LAZARUS] [VOID BLACK] Preparing Lazarus Chamber for PID {target_pid}..."
@@ -97,8 +96,6 @@ class SandboxEnvironment:
         print(
             f"[YOMI-LAZARUS] [BLOOD RED] Initiating forced resurrection (SIGCONT) on PID {target_pid}..."
         )
-
-        thaw_result = self.os_bridge.thaw_process(target_pid)
 
         if thaw_result.get("status") == "SUCCESS":
             print(
