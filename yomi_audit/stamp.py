@@ -49,6 +49,9 @@ class ImmutableStamp:
         self.ledger_file = os.path.join(self.data_dir, self.LEDGER_FILENAME)
         self.hmac_key_file = os.path.join(self.data_dir, "audit_hmac.key")
         self.checkpoint_file = os.path.join(self.data_dir, "ledger_checkpoint.bin")
+        self.notary_checkpoint_file = os.path.join(
+            self.data_dir, "ledger_notary_checkpoint.json"
+        )
         self.hmac_key = self._load_or_generate_hmac_key()
         self._ensure_ledger_file()
         self._cleanup_corrupt_backups_if_requested()
@@ -404,27 +407,37 @@ class ImmutableStamp:
         Creates a mathematically verifiable cryptographically-signed SOC attestation
         for air-gapped environments.
         """
+        if not self.hmac_key:
+            print(
+                "[YOMI-AUDIT] HMAC key unavailable; notary SOC checkpoint attestation skipped."
+            )
+            return
+
         if os.path.exists(self.notary_checkpoint_file):
             self._secure_path_permissions(self.notary_checkpoint_file, 0o600)
-            
+
         checkpoint = {
             "latest_hash": entry.get("hash"),
             "timestamp": entry.get("timestamp_utc"),
             "agent": entry.get("agent"),
-            "action": entry.get("action_type")
+            "action": entry.get("action_type"),
         }
-        
+
         canonical_data = self._canonical_json(checkpoint)
-        
+
         signature = hmac.new(
-            self.hmac_key, 
-            canonical_data.encode("utf-8"), 
-            hashlib.sha256
+            self.hmac_key,
+            canonical_data.encode("utf-8"),
+            hashlib.sha256,
         ).hexdigest()
-        
+
         checkpoint["attestation_signature"] = signature
-        
-        self._atomic_write(self.notary_checkpoint_file, self._canonical_json(checkpoint), encoding="utf-8")
+
+        self._atomic_write(
+            self.notary_checkpoint_file,
+            self._canonical_json(checkpoint),
+            encoding="utf-8",
+        )
         self._secure_path_permissions(self.notary_checkpoint_file, 0o400)
 
     def verify_soc_checkpoint(self) -> bool:
