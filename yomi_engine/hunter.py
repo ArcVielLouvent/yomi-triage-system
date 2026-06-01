@@ -36,26 +36,49 @@ class OmniVectorHunter:
         if not output:
             return "Plaso output was empty or unavailable."
 
-        events = []
-        for line in output.splitlines():
-            normalized = line.lower()
-            if "logon" in normalized and "success" in normalized:
-                events.append("Suspicious successful logon event detected.")
-            if "powershell" in normalized or "cmd.exe" in normalized:
-                events.append("Command shell activity observed near time of compromise.")
-            if "mimikatz" in normalized or "lsass" in normalized:
-                events.append("Credential dumping behavior observed in timeline output.")
-            if len(events) >= 3:
-                break
+        suspicious_events = []
+        timestamp_pattern = re.compile(r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})")
+        event_patterns = [
+            (re.compile(r"logon.*success", flags=re.IGNORECASE), "Suspicious successful logon event"),
+            (re.compile(r"powershell|cmd\.exe", flags=re.IGNORECASE), "Command shell execution event"),
+            (re.compile(r"mimikatz|lsass", flags=re.IGNORECASE), "Credential dumping or LSASS access event"),
+            (re.compile(r"delete|unallocated|carved", flags=re.IGNORECASE), "Deleted/orphaned artifact event"),
+        ]
 
-        return events[0] if events else "No suspicious temporal artifacts found."
+        for line in output.splitlines():
+            match = timestamp_pattern.search(line)
+            timestamp = match.group(1) if match else "UNKNOWN_TIME"
+            normalized = line.strip()
+            for pattern, description in event_patterns:
+                if pattern.search(normalized):
+                    suspicious_events.append((timestamp, description, normalized))
+
+        if not suspicious_events:
+            return "No suspicious temporal artifacts found."
+
+        suspicious_events.sort(key=lambda item: item[0])
+        window_start = suspicious_events[0][0]
+        window_end = suspicious_events[-1][0]
+        summary_lines = [
+            f"[{evt[0]}] {evt[1]}: {evt[2]}" for evt in suspicious_events[:3]
+        ]
+        return (
+            f"Suspicious timeline cluster detected between {window_start} and {window_end}. "
+            f"Key events: {' | '.join(summary_lines)}"
+        )
 
     def _parse_tsk_output(self, output: str) -> str:
         if not output:
             return "TSK output was empty or unavailable."
 
-        if re.search(r"mimikatz|powershell|cmd\.exe|unallocated|deleted", output, flags=re.IGNORECASE):
-            return "Suspicious deleted or orphaned binary artifacts identified by TSK."
+        deleted_patterns = re.compile(r"mimikatz|powershell|cmd\.exe|unallocated|deleted|carved|shadow|sam", flags=re.IGNORECASE)
+        matches = deleted_patterns.findall(output)
+        if matches:
+            unique_matches = sorted(set(matches), key=str.lower)
+            return (
+                "Suspicious file system artifacts identified by TSK: "
+                f"{', '.join(unique_matches)}"
+            )
         return "No obvious deleted or hidden droppers found in TSK output."
 
     def hunt_root_cause(self, target_pid: int) -> dict:
@@ -104,5 +127,6 @@ class OmniVectorHunter:
 if __name__ == "__main__":
     print("\n[+] Activating Root-Cause Hunter...")
     hunter = OmniVectorHunter()
-    result = hunter.hunt_root_cause(4092)
+    target_pid = int(os.environ.get("YOMI_HUNTER_PID", "9999"))
+    result = hunter.hunt_root_cause(target_pid)
     print(f"\n[+] Hunt Conclusion: {result.get('conclusion')}\n")

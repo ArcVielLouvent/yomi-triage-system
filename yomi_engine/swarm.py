@@ -1,4 +1,6 @@
+import ipaddress
 import os
+import re
 import sys
 import threading
 import shutil
@@ -67,6 +69,37 @@ class SwarmOrchestrator:
                 return candidate
         return None
 
+    def _is_external_ip(self, candidate: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(candidate)
+            return not (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_link_local
+            )
+        except ValueError:
+            return False
+
+    def _extract_external_ips(self, text: str) -> list[str]:
+        ips = set()
+        for match in re.finditer(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", text):
+            candidate = match.group(0)
+            if self._is_external_ip(candidate):
+                ips.add(candidate)
+        return sorted(ips)
+
+    def _extract_suspect_pids(self, text: str) -> list[int]:
+        pids = set()
+        for match in re.finditer(r"\bPID\s*[:=]?\s*(\d+)\b", text, flags=re.IGNORECASE):
+            pids.add(int(match.group(1)))
+        for match in re.finditer(r"\b(\d{3,5})\b", text):
+            value = int(match.group(1))
+            if value > 1000 and value < 65535:
+                pids.add(value)
+        return sorted(pids)
+
     def _live_network_findings(self) -> list[str]:
         findings = []
         if shutil.which("ss"):
@@ -74,11 +107,17 @@ class SwarmOrchestrator:
                 ["ss", "-tunap"], capture_output=True, text=True, timeout=15
             )
             output = proc.stdout or ""
-            if "103.45.0.0" in output:
+            external_ips = self._extract_external_ips(output)
+            suspect_pids = self._extract_suspect_pids(output)
+            if external_ips:
                 findings.append(
-                    "Live network scan: suspicious external connection to 103.45.0.0 detected."
+                    f"Live network scan: external connection(s) observed to {', '.join(external_ips)}."
                 )
-            if "ESTAB" in output and "127.0.0.1" not in output:
+            if suspect_pids:
+                findings.append(
+                    f"Live network scan: suspect process IDs observed: {', '.join(str(pid) for pid in suspect_pids)}."
+                )
+            if "ESTAB" in output and not any(addr in output for addr in ["127.0.0.1", "::1"]):
                 findings.append("Live network scan: established remote connections detected.")
         return findings
 
@@ -89,13 +128,20 @@ class SwarmOrchestrator:
             result = self.arsenal.run_volatility_netscan(dump_path)
             if result.get("status") == "SUCCESS":
                 output = result.get("output", "")
-                if "ESTABLISHED" in output and "103.45.0.0" in output:
+                external_ips = self._extract_external_ips(output)
+                suspect_pids = self._extract_suspect_pids(output)
+
+                if external_ips:
                     findings.append(
-                        "Volatility netscan found an established C2 channel to 103.45.0.0."
+                        f"Volatility netscan detected external connection(s): {', '.join(external_ips)}."
                     )
-                if "PID" in output and "4092" in output:
+                if suspect_pids:
                     findings.append(
-                        "Volatility netscan identified suspicious PID 4092 with network sockets."
+                        f"Volatility netscan flagged suspicious process IDs: {', '.join(str(pid) for pid in suspect_pids)}."
+                    )
+                if not external_ips and not suspect_pids:
+                    findings.append(
+                        "Volatility netscan completed without explicit external endpoint or PID anomalies."
                     )
             else:
                 findings.append(
@@ -117,13 +163,24 @@ class SwarmOrchestrator:
             result = self.arsenal.run_tshark_pcap(pcap_path)
             if result.get("status") == "SUCCESS":
                 output = result.get("output", "")
-                if "103.45.0.0" in output:
+                external_ips = self._extract_external_ips(output)
+                suspect_pids = self._extract_suspect_pids(output)
+
+                if external_ips:
                     findings.append(
-                        "TShark flagged suspicious beaconing to 103.45.0.0 in network capture."
+                        f"TShark flagged external destination(s): {', '.join(external_ips)}."
+                    )
+                if suspect_pids:
+                    findings.append(
+                        f"TShark found suspicious PID references: {', '.join(str(pid) for pid in suspect_pids)}."
                     )
                 if "http.host" in output or "dns.qry.name" in output:
                     findings.append(
                         "TShark analysis found potential command-and-control URL/DNS activity."
+                    )
+                if not external_ips and not suspect_pids:
+                    findings.append(
+                        "TShark completed without obvious external C2 or PID anomalies."
                     )
             else:
                 findings.append(

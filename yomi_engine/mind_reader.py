@@ -54,7 +54,7 @@ class MindReaderDecompiler:
         {assembly_output}
         """
 
-        ai_profile_response = self._derive_profile_from_assembly(assembly_output)
+        ai_profile_response = self._derive_profile_from_assembly(assembly_output, profiling_context)
 
         self.audit.record_action(
             "MINDREADER",
@@ -92,7 +92,7 @@ class MindReaderDecompiler:
             "hacker_profile": ai_profile_response,
         }
 
-    def _derive_profile_from_assembly(self, assembly_code: str) -> dict:
+    def _derive_profile_from_assembly(self, assembly_code: str, context: str) -> dict:
         if not assembly_code:
             return {
                 "skill_level": "Unknown",
@@ -101,8 +101,30 @@ class MindReaderDecompiler:
                 "mitre_tactics": ["T1027 (Obfuscated Files or Information)"],
             }
 
+        try:
+            from yomi_core.router import OpenClawGateway
+
+            gateway = OpenClawGateway()
+            artifact_response = gateway.analyze_artifact(
+                context,
+                task="Generate a threat actor profile from extracted assembly and strings",
+            )
+            if artifact_response:
+                parsed_payload = gateway._extract_json_payload(artifact_response)
+                if parsed_payload:
+                    parsed = json.loads(parsed_payload)
+                    required_keys = {"skill_level", "methodology", "psychology", "mitre_tactics"}
+                    if required_keys.issubset(parsed.keys()):
+                        return parsed
+        except Exception as exc:
+            self.audit.record_action(
+                "MINDREADER",
+                "LLM_ANALYSIS_ERROR",
+                f"OpenClawGateway analysis failed: {str(exc)}",
+            )
+
         normalized = assembly_code.lower()
-        if "socket" in normalized or "connect" in normalized or "103.45.0.0" in normalized:
+        if "socket" in normalized or "connect" in normalized:
             return {
                 "skill_level": "Advanced (APT Behavior)",
                 "methodology": "Network-centric C2 payload with stealth and persistence mechanisms.",

@@ -52,7 +52,7 @@ class MitreMapper:
                     "beacon",
                     "outbound",
                     "established",
-                    "103.45.0.0",
+                    "command-and-control",
                     "connection",
                 ],
             },

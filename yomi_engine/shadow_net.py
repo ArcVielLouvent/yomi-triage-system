@@ -126,9 +126,9 @@ if __name__ == "__main__":
     shadow = ShadowNetProtocol()
 
     # Simulating a high-doubt scenario where AI refuses to freeze immediately
-    test_pid = 4092
+    test_pid = int(os.environ.get("YOMI_TEST_PID", "9999"))
     print(
-        f"[+] AI Doubt is 65%. Deploying hook to PID {test_pid} instead of freezing..."
+        f"[+] AI Doubt is elevated. Deploying hook to PID {test_pid} instead of freezing..."
     )
 
     result = shadow.deploy_micro_hook(

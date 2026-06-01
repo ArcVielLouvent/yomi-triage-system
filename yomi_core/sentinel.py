@@ -5,6 +5,7 @@ import sys
 import re
 import threading
 import traceback
+import psutil
 
 # Append root directory to sys.path to ensure absolute imports function correctly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -50,19 +51,7 @@ class SentinelDaemon:
 
     def _free_memory_percent(self) -> float:
         try:
-            with open("/proc/meminfo", "r", encoding="utf-8") as meminfo:
-                total = None
-                free = None
-                available = None
-                for line in meminfo:
-                    if line.startswith("MemTotal:"):
-                        total = int(line.split()[1])
-                    elif line.startswith("MemAvailable:"):
-                        available = int(line.split()[1])
-                    if total and available:
-                        break
-                if total and available:
-                    return available / total * 100.0
+            return psutil.virtual_memory().available / psutil.virtual_memory().total * 100.0
         except FileNotFoundError:
             pass
         except Exception:

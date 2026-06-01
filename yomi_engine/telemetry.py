@@ -89,9 +89,10 @@ class TelemetryEngine:
 if __name__ == "__main__":
     tel = TelemetryEngine()
     print("[+] Simulating Threat Detection...")
-    tel.start_timer("INCIDENT_XZ_4092")
+    incident_id = os.environ.get("YOMI_INCIDENT_ID", "INCIDENT_XZ")
+    tel.start_timer(incident_id)
 
     # Simulate processing time (e.g., LLM thinking, OS Bridge freezing)
     time.sleep(0.35)
 
-    tel.stop_timer("INCIDENT_XZ_4092", "Cryogenic Freeze (SIGSTOP)")
+    tel.stop_timer(incident_id, "Cryogenic Freeze (SIGSTOP)")

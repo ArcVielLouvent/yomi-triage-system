@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import psutil
 from datetime import datetime
 from rich.console import Console
 from rich.layout import Layout
@@ -90,6 +91,9 @@ class YomiDashboard:
         """Real-time updating left panel."""
         self.refresh_system_metrics()
         self.refresh_library_metrics()
+        yomi_process = psutil.Process(os.getpid())
+        yomi_cpu = yomi_process.cpu_percent(interval=None)
+        yomi_ram_mb = yomi_process.memory_info().rss / (1024 * 1024)
 
         table = Table(box=box.SIMPLE, expand=True, show_header=False)
         table.add_column("Metric", style=self.colors["ghost_white"])
@@ -111,11 +115,16 @@ class YomiDashboard:
             "Epistemic Doubt",
             Text(self.epistemic_doubt, style=self.colors["plasma_blue"]),
         )
+        table.add_row("Yomi CPU Footprint", Text(f"{yomi_cpu:.1f}%", style="green"))
+        table.add_row(
+            "Yomi RAM Footprint", Text(f"{yomi_ram_mb:.1f} MB", style="green")
+        )
         table.add_row(
             "Host CPU Usage", Text(self.cpu_usage, style=self.colors["plasma_blue"])
         )
         table.add_row(
-            "Host Memory Usage", Text(self.memory_usage, style=self.colors["plasma_blue"])
+            "Host Memory Usage",
+            Text(self.memory_usage, style=self.colors["plasma_blue"]),
         )
         table.add_row(
             "Memory Threat", Text(self.memory_status, style=self.colors["warning"])
@@ -130,10 +139,15 @@ class YomiDashboard:
             "Last CVE Sync", Text(self.last_cve_sync, style=self.colors["plasma_blue"])
         )
         table.add_row(
-            "Library Status", Text(self.library_status, style=self.colors["plasma_blue"])
+            "Library Status",
+            Text(self.library_status, style=self.colors["plasma_blue"]),
         )
         table.add_row(
-            "Scope", Text("Host-wide system metrics, not Yomi-only", style=self.colors["plasma_blue"])
+            "Scope",
+            Text(
+                "Host-wide system metrics, not Yomi-only",
+                style=self.colors["plasma_blue"],
+            ),
         )
         table.add_row(
             "eBPF Sentinel", Text(self.ebpf_status, style=self.colors["green_matrix"])

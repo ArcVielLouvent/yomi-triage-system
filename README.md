@@ -10,6 +10,10 @@
 
 Yomi is an autonomous Digital Forensics and Incident Response engine designed to operate as a real-world incident triage system. It combines live forensic toolchain detection, a strict Model Context Protocol (MCP) tool surface, and cascading LLM reasoning to drive safe, evidence-driven action.
 
+**When offensive platforms need 60 seconds to fully exploit a host, Yomi can observe, orient, decide, and act in under 5 seconds — freezing suspect processes before the adversary escalates.**
+
+**Air-gapped resilient mode is supported:** if Gemini credentials are unavailable or the host is isolated, Yomi falls back to a local LLM endpoint and continues triage without internet access.
+
 This repository now includes:
 
 - Real forensic binary discovery and runtime tool gating via `yomi_mcp/os_bridge.py`
@@ -17,6 +21,7 @@ This repository now includes:
 - Full MCP tool registry and schema enforcement in `yomi_mcp/mcp_server.py`
 - Event-driven Sentinel core with adaptive threat scoring in `yomi_core/sentinel.py`
 - Gemini + local LLM cascade with robust JSON extraction in `yomi_core/router.py`
+- Air-gapped/local LLM fallback using `YOMI_LOCAL_LLM_URL`, `YOMI_AIR_GAPPED_MODE`, and `YOMI_FORCE_LOCAL_LLM`
 - Immutable audit ledger instrumentation in `yomi_audit/stamp.py`
 - Root-cause and timeline hunting logic in `yomi_engine/hunter.py`
 
@@ -94,6 +99,7 @@ flowchart TD
 - Real host telemetry via `/proc/meminfo` and load metrics.
 - Threat scoring from live anomaly data.
 - Direct routing of forensic context into the LLM gateway.
+- Supports OS-specific process suspension and containment actions; on Linux `OSBridge.cryogenic_freeze()` uses `SIGSTOP`.
 - Designed for minimal CPU impact in `SAFE` mode and hyper-scan responsiveness in `CRITICAL` mode.
 
 ### 3.2 `yomi_engine/swarm.py`
@@ -227,7 +233,7 @@ python -c "from yomi_core.router import YomiRouter; print(YomiRouter().execute_a
 
 ## 9. Notes for SANS Review
 
-- This update removes placeholder mock logic from the core Sentinel and forensic orchestration path.
+- This update removes placeholder logic from the core Sentinel and forensic orchestration path.
 - The Sentinel is now focused on real host telemetry and actual tool outputs.
 - The repository uses explicit MCP schemas, so the LLM cannot execute arbitrary commands.
 - The architecture is designed to exceed alerting and triage responsiveness standards while maintaining evidence integrity.

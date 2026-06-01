@@ -128,11 +128,11 @@ if __name__ == "__main__":
     mirage = MirageProtocol()
 
     # Test Linux Deception
-    target_pid_linux = 4092
+    target_pid_linux = int(os.environ.get("YOMI_MIRAGE_TARGET_PID_LINUX", "9999"))
     linux_result = mirage.deploy_hallucination(target_pid_linux, "LINUX")
 
     # Test Windows Deception
-    target_pid_win = 9918
+    target_pid_win = int(os.environ.get("YOMI_MIRAGE_TARGET_PID_WINDOWS", "9998"))
     win_result = mirage.deploy_hallucination(target_pid_win, "WINDOWS")
 
     print("\n[+] Verification:")

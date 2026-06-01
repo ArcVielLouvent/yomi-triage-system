@@ -1,7 +1,9 @@
+import ctypes
 import os
 import platform
 import signal
 import shutil
+import psutil
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v3.0)
@@ -128,9 +130,13 @@ class OSBridge:
                     "os": "Linux",
                     "method": "SIGSTOP",
                 }
+
+            if self.os_type == "Windows":
+                return self._windows_suspend_process(pid)
+
             return {
                 "status": "ERROR",
-                "reason": "Cryogenic freeze is only supported on Linux hosts.",
+                "reason": "Cryogenic freeze is only supported on Linux and Windows hosts.",
             }
         except ProcessLookupError:
             return {"status": "ERROR", "reason": f"PID {pid} not found."}
@@ -170,9 +176,65 @@ class OSBridge:
                     "os": "Linux",
                     "method": "SIGCONT",
                 }
+
+            if self.os_type == "Windows":
+                return self._windows_resume_process(pid)
+
             return {
                 "status": "ERROR",
-                "reason": "Thaw is only supported on Linux hosts.",
+                "reason": "Thaw is only supported on Linux and Windows hosts.",
+            }
+        except Exception as e:
+            return {"status": "ERROR", "reason": str(e)}
+
+    def _windows_open_process(self, pid: int):
+        PROCESS_SUSPEND_RESUME = 0x0800
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION,
+            False,
+            pid,
+        )
+        if not handle:
+            raise OSError(f"Failed to open process {pid} for suspension.")
+        return handle
+
+    def _windows_suspend_process(self, pid: int) -> dict:
+        try:
+            handle = self._windows_open_process(pid)
+            status = ctypes.windll.ntdll.NtSuspendProcess(handle)
+            ctypes.windll.kernel32.CloseHandle(handle)
+            if status == 0:
+                return {
+                    "status": "SUCCESS",
+                    "action": "FROZEN",
+                    "pid": pid,
+                    "os": "Windows",
+                    "method": "NTSuspendProcess",
+                }
+            return {
+                "status": "ERROR",
+                "reason": f"NtSuspendProcess failed with status {status}.",
+            }
+        except Exception as e:
+            return {"status": "ERROR", "reason": str(e)}
+
+    def _windows_resume_process(self, pid: int) -> dict:
+        try:
+            handle = self._windows_open_process(pid)
+            status = ctypes.windll.ntdll.NtResumeProcess(handle)
+            ctypes.windll.kernel32.CloseHandle(handle)
+            if status == 0:
+                return {
+                    "status": "SUCCESS",
+                    "action": "THAWED",
+                    "pid": pid,
+                    "os": "Windows",
+                    "method": "NtResumeProcess",
+                }
+            return {
+                "status": "ERROR",
+                "reason": f"NtResumeProcess failed with status {status}.",
             }
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}

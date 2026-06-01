@@ -15,15 +15,22 @@ from yomi_mcp.harness import YomiHarness
 #          ReAct (Reasoning and Acting) Self-Correction Loop.
 # ============================================================================== 
 
-GEMINI_API_KEY = os.environ.get(
-    "YOMI_GEMINI_API_KEY",
-    "AIzaSyC9u_P-IvkM7aEbPVPIgr-qbowNgrZmOQg",
-)
+GEMINI_API_KEY = os.environ.get("YOMI_GEMINI_API_KEY")
 GEMINI_API_URL_TEMPLATE = "https://gemini.googleapis.com/v1/models/{model}:generate"
 LOCAL_LLM_ENDPOINT = os.environ.get(
     "YOMI_LOCAL_LLM_URL", "http://127.0.0.1:11434/v1/completions"
 )
 LOCAL_LLM_MODELS = ["llama3", "llama2"]
+AIR_GAPPED_MODE = os.environ.get("YOMI_AIR_GAPPED_MODE", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+FORCE_LOCAL_LLM = os.environ.get("YOMI_FORCE_LOCAL_LLM", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 MAX_OUTPUT_TOKENS = 1024
 REQUEST_TIMEOUT = 25
 
@@ -41,24 +48,44 @@ class OpenClawGateway:
         ]
         self.local_models = LOCAL_LLM_MODELS
         self.attempt_counter = 0
+        self.airgapped_mode = AIR_GAPPED_MODE
+        self.force_local = FORCE_LOCAL_LLM or self.airgapped_mode or not bool(GEMINI_API_KEY)
+        self.local_only = self.force_local or not bool(GEMINI_API_KEY)
         self.audit = ImmutableStamp()
 
     def generate_intent(self, prompt: str) -> str:
         self.attempt_counter += 1
         print(f"[OPENCLAW] Running LLM cascade iteration {self.attempt_counter}...")
 
+        if self.local_only:
+            print(
+                "[OPENCLAW] Air-gapped/local-only mode active. Using local LLMs first."
+            )
+        elif not GEMINI_API_KEY:
+            print(
+                "[OPENCLAW] Gemini API key missing. Falling back to local LLM models."
+            )
+
         system_prompt = self._compose_system_prompt()
         user_prompt = self._compose_user_prompt(prompt)
 
-        for model in self.models_cascade:
-            response_text = self._call_gemini_model(model, system_prompt, user_prompt)
-            if response_text and self._validate_generated_text(response_text):
-                return response_text
+        if not self.local_only:
+            for model in self.models_cascade:
+                response_text = self._call_gemini_model(model, system_prompt, user_prompt)
+                if response_text and self._validate_generated_text(response_text):
+                    return response_text
 
         for model in self.local_models:
             response_text = self._call_local_llm(model, system_prompt, user_prompt)
             if response_text and self._validate_generated_text(response_text):
                 return response_text
+
+        if not self.local_only:
+            print("[OPENCLAW] Gemini cascade exhausted. Attempting local fallback.")
+            for model in self.local_models:
+                response_text = self._call_local_llm(model, system_prompt, user_prompt)
+                if response_text and self._validate_generated_text(response_text):
+                    return response_text
 
         error_intent = {
             "red_agent": "Unable to generate a reliable threat assessment.",
@@ -226,6 +253,42 @@ class OpenClawGateway:
                     candidate = candidate.strip()
                     if candidate.startswith("{") and candidate.endswith("}"):
                         return candidate
+        return None
+
+    def analyze_artifact(self, artifact: str, task: str = "analyze") -> str | None:
+        """Use the same gateway policy to analyze arbitrary forensic artifacts."""
+        self.attempt_counter += 1
+        print(f"[OPENCLAW] Artifact analysis request ({task}) iteration {self.attempt_counter}...")
+
+        system_prompt = (
+            "You are Yomi, a forensic analyst and reverse engineering assistant. "
+            "You must respond with a single valid JSON object only. "
+            "For assembly analysis, include the fields: skill_level, methodology, psychology, mitre_tactics. "
+            "Do not add any explanation or markdown." 
+        )
+        user_prompt = f"Task: {task}\nAssembly/Text:\n{artifact}"
+
+        if self.local_only:
+            print(
+                "[OPENCLAW] Air-gapped/local-only mode active. Using local LLMs first for artifact analysis."
+            )
+        elif not GEMINI_API_KEY:
+            print(
+                "[OPENCLAW] Gemini API key missing. Falling back to local LLM models for artifact analysis."
+            )
+
+        if not self.local_only:
+            for model in self.models_cascade:
+                response_text = self._call_gemini_model(model, system_prompt, user_prompt)
+                if response_text:
+                    return response_text
+
+        for model in self.local_models:
+            response_text = self._call_local_llm(model, system_prompt, user_prompt)
+            if response_text:
+                return response_text
+
+        print("[OPENCLAW] Artifact analysis failed on all available models.")
         return None
 
 
