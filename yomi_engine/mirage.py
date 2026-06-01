@@ -35,8 +35,18 @@ class MirageProtocol:
 
     def deploy_hallucination(self, target_pid: int, os_target: str = "LINUX") -> dict:
         """
-        Synthesizes a fake environment tailored to the malware's expected OS.
+        Deploys a synthetic decoy environment only when Mirage mode is explicitly enabled.
         """
+        if os.environ.get("YOMI_ENABLE_MIRAGE_MODE", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return {
+                "status": "SKIPPED",
+                "reason": "Mirage Protocol is disabled. Set YOMI_ENABLE_MIRAGE_MODE=true to enable.",
+            }
+
         print(
             f"\n[YOMI-MIRAGE] [CYBER-PURPLE] Generating synthetic OS hallucination for PID {target_pid}..."
         )

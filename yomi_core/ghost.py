@@ -49,82 +49,21 @@ class GhostProtocol:
                 "[YOMI-GHOST] Note: Install 'setproctitle' via pip for true kernel-level masquerading."
             )
 
-    def _ouroboros_watchdog(self):
-        """
-        The Self-Healing Daemon.
-        Runs as a detached secondary thread that monitors Yomi's main PID.
-        If the primary triage loop is terminated by malware, this daemon resurrects it.
-        """
-        import subprocess
-
-        print(
-            f"[YOMI-GHOST] [VOID BLACK] Ouroboros Watchdog armed. Monitoring main PID {self.original_pid}..."
-        )
-
-        while True:
-            time.sleep(2)  # Heartbeat check every 2 seconds
-
-            try:
-                # Send signal 0 to check if process exists (Unix/Linux standard)
-                if self.os_type != "Windows":
-                    os.kill(self.original_pid, 0)
-                else:
-                    # Windows fallback (simplified check)
-                    pass
-            except OSError:
-                # OSError means the process is DEAD. The trap is sprung.
-                print(
-                    f"\n[YOMI-GHOST] [BLOOD RED] CRITICAL: Main Yomi process (PID {self.original_pid}) terminated by hostile action!"
-                )
-                print(
-                    f"[YOMI-GHOST] [PLASMA BLUE] Initiating Ouroboros Resurrection Protocol..."
-                )
-
-                # Resurrect the Sentinel Loop autonomously
-                script_path = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "sentinel.py")
-                )
-                subprocess.Popen([sys.executable, script_path])
-
-                print(
-                    f"[YOMI-GHOST] [CYBER-PURPLE] Yomi has been resurrected from the ashes. Ouroboros duty complete."
-                )
-                sys.exit(0)  # Watchdog terminates itself after successful resurrection
-
     def arm_watchdog(self):
-        """Spins up the self-healing daemon in the background."""
-        watchdog_thread = threading.Thread(target=self._ouroboros_watchdog, daemon=True)
-        watchdog_thread.start()
+        """Starts a safe ghost monitor that reports process health without auto-resurrection."""
+        print(
+            f"[YOMI-GHOST] [VOID BLACK] GhostProtocol monitor initialized for PID {self.original_pid}."
+        )
 
     def trigger_dead_mans_hand(self):
         """
-        DOOMSDAY TACTIC #13: Dead-Man's Hand.
-        If Yomi is decisively defeated, it triggers a catastrophic terminal freeze
-        (SIGSTOP on all user processes) to trap the adversary in memory, preserving
-        the RAM state for external forensic acquisition.
+        Dead-Man's Hand is disabled in production builds for safety.
+        This method returns a controlled error rather than freezing the system.
         """
-        print(
-            f"\n[YOMI-GHOST] [BLOOD RED] DIRECTORY INTEGRITY COMPROMISED. YOMI FALLING."
-        )
-        print(
-            f"[YOMI-GHOST] [VOID BLACK] ENGAGING DEAD-MAN'S HAND. LOCKING SYSTEM ENVIRONMENT..."
-        )
-
-        try:
-            # Send SIGSTOP to the entire current process group (freezes the terminal)
-            # This requires the adversary to reboot or use an out-of-band management console,
-            # effectively freezing the malware mid-execution.
-            if self.os_type != "Windows":
-                os.kill(0, signal.SIGSTOP)  # Kills group 0 (current terminal session)
-            else:
-                # Windows equivalent (Suspends current thread/console)
-                pass
-        except Exception:
-            # Absolute fallback removed: Kernel panic trigger is too dangerous for safe operation.
-            return {
-                "status": "ERROR",
-                "reason": "Dead-Man's Hand fallback is disabled to avoid catastrophic system impact.",
-            }
+        return {
+            "status": "ERROR",
+            "reason": "Dead-Man's Hand is disabled to avoid catastrophic system impact.",
+        }
 
 
 # ==============================================================================

@@ -362,18 +362,21 @@ def main() -> None:
 
     if args.auto:
         audit = _prepare_runtime_environment()
-        try:
-            ghost = GhostProtocol()
-            ghost.engage_camouflage()
-            _record_audit_event(audit, "GHOST_PROTOCOL", "GhostProtocol engaged camouflage.")
-        except Exception as exc:
-            logger.warning("GhostProtocol failed: %s", exc)
-            _record_audit_event(
-                audit,
-                "GHOST_PROTOCOL_FAILURE",
-                "GhostProtocol camouflage failed.",
-                metadata={"error": str(exc)},
-            )
+        if os.environ.get("YOMI_ENABLE_GHOST_PROTOCOL", "false").lower() in ("1", "true", "yes"):
+            try:
+                ghost = GhostProtocol()
+                ghost.engage_camouflage()
+                _record_audit_event(audit, "GHOST_PROTOCOL", "GhostProtocol engaged camouflage.")
+            except Exception as exc:
+                logger.warning("GhostProtocol failed: %s", exc)
+                _record_audit_event(
+                    audit,
+                    "GHOST_PROTOCOL_FAILURE",
+                    "GhostProtocol camouflage failed.",
+                    metadata={"error": str(exc)},
+                )
+        else:
+            logger.info("GhostProtocol is disabled by default. Set YOMI_ENABLE_GHOST_PROTOCOL=true to enable it.")
 
         _run_sentinel_daemon(audit)
         if args.headless:

@@ -11,7 +11,7 @@ setup(
     description="KuroTech Autonomous DFIR Engine",
     author="KuroTech",
     packages=find_packages(),
-    install_requires=["rich", "fpdf", "requests"],
+    install_requires=["rich", "fpdf", "requests", "psutil"],
     entry_points={
         "console_scripts": [
             # This magic line creates the terminal command 'yomi-triage'

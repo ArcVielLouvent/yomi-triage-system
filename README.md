@@ -192,6 +192,8 @@ Yomi now supports the following MCP-enabled operations when the underlying binar
 python -m pip install -r requirements.txt
 ```
 
+Yomi also requires `psutil` for process control and local environment detection. If you install via `setup.py`, the package dependencies are now aligned with runtime requirements.
+
 On a SIFT host, ensure the following tools are available on PATH:
 
 - `vol.py` / `vol`
@@ -216,6 +218,12 @@ On a SIFT host, ensure the following tools are available on PATH:
 ```bash
 python yomi_mcp/mcp_server.py
 ```
+
+### Optional runtime configuration
+
+- `YOMI_ENABLE_GHOST_PROTOCOL=true` enables optional GhostProtocol process hiding.
+- `YOMI_ENABLE_MIRAGE_MODE=true` enables Mirage decoy/honeypot deployment during sandbox analysis.
+- `YOMI_AIR_GAPPED_MODE=true` forces local-only LLM fallback for isolated SIFT environments.
 
 ### Start the sentinel daemon
 

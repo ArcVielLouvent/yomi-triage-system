@@ -138,15 +138,23 @@ class SandboxEnvironment:
         )
         time.sleep(2)  # Let the malware wake up
 
-        # 1. Deploy Mirage Protocol (Honeytokens)
-        mirage = MirageProtocol()
-        mirage.deploy_hallucination(target_pid, os_target="LINUX")
-
-        time.sleep(2)  # Let the malware bite the bait
+        # 1. Optionally deploy Mirage Protocol (Honeytokens) only if explicitly enabled
+        if os.environ.get("YOMI_ENABLE_MIRAGE_MODE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            mirage = MirageProtocol()
+            mirage.deploy_hallucination(target_pid, os_target="LINUX")
+            time.sleep(2)  # Let the malware bite the bait
+        else:
+            print(
+                "[YOMI-LAZARUS] [CYBER-PURPLE] Mirage Protocol disabled. Skipping decoy deployment."
+            )
 
         # 2. Trigger Mind-Reader Decompiler (Reverse Engineering)
         print(
-            f"[YOMI-LAZARUS] [VOID BLACK] Bait taken. Executing Mind-Reader Profiling..."
+            f"[YOMI-LAZARUS] [VOID BLACK] Executing Mind-Reader Profiling..."
         )
         decompiler = MindReaderDecompiler()
         decompiler.decompile_and_profile(contained_path, target_pid)
