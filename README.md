@@ -38,7 +38,7 @@ graph LR;
     A[Host / Artifact Source] --> B[OSBridge / Tool Discovery]
     B --> C[SiftArsenal - Tool Wrappers]
     C --> D[MCP Server Schema Registry]
-    D --> E[OpenClaw Gateway (Gemini + Local LLM)]
+    D --> E[OpenClaw Gateway]
     E --> F[Yomi Router / Triad Council]
     F --> G[Sentinel / Runtime Orchestrator]
     G --> H[Telemetry & Audit Ledger]
