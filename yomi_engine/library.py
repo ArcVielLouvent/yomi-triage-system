@@ -169,6 +169,9 @@ class OmniLibrary:
         return os.path.join(self.db_dir, f"{year}.json")
 
     def _load_year_file(self, year: int) -> dict[str, dict]:
+        if year in self.year_cache:
+            return self.year_cache[year]
+
         path = self._year_file(year)
         if not os.path.exists(path):
             return {}
@@ -178,12 +181,14 @@ class OmniLibrary:
                 raw_content = f.read()
                 content = json.loads(raw_content)
                 if isinstance(content, dict):
+                    self.year_cache[year] = content
                     return content
                 if isinstance(content, list):
                     converted: dict[str, dict] = {}
                     for item in content:
                         if isinstance(item, dict) and item.get("cve_id"):
                             converted[str(item["cve_id"])] = item
+                    self.year_cache[year] = converted
                     return converted
         except Exception as exc:
             corrupt_path = f"{path}.corrupt.{int(time.time())}.json"
@@ -212,6 +217,8 @@ class OmniLibrary:
         return {}
 
     def _save_year_file(self, year: int, year_store: dict[str, dict]) -> None:
+        self.year_cache[year] = year_store
+
         path = self._year_file(year)
         temp_path = path + ".tmp"
         with open(temp_path, "w", encoding="utf-8") as f:

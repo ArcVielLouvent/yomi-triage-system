@@ -18,7 +18,9 @@ from datetime import datetime, timezone
 #          Implements deterministic JSON canonicalization, file-level integrity,
 #          secure storage, and audit-grade evidence provenance.
 # ==============================================================================
-
+class SecurityError(Exception):
+    """Exception raised for critical security and tampering incidents."""
+    pass
 
 class ImmutableStamp:
     _instance = None
@@ -46,8 +48,14 @@ class ImmutableStamp:
 
         self.ledger_file = os.path.join(self.data_dir, self.LEDGER_FILENAME)
         self.hmac_key_file = os.path.join(self.data_dir, "audit_hmac.key")
+        self.notary_checkpoint_file = os.path.join(self.data_dir, "soc_notary_checkpoint.sig")
         self.hmac_key = self._load_or_generate_hmac_key()
-
+        is_safe = self.verify_soc_checkpoint()
+        
+        if not is_safe:
+            raise SecurityError("CRITICAL: SOC Checkpoint Tampering Detected!")
+            
+        print("[+] Verification successful. Loading CVE database...")
         self._ensure_ledger_file()
         self._cleanup_corrupt_backups_if_requested()
         self.last_hash = self._load_or_initialize_ledger()
@@ -380,6 +388,78 @@ class ImmutableStamp:
             except OSError:
                 pass
         self._secure_path_permissions(self.ledger_file, 0o600)
+        self._anchor_soc_checkpoint(entry)
+
+    def _anchor_soc_checkpoint(self, entry: dict) -> None:
+        """
+        Creates a mathematically verifiable cryptographically-signed SOC attestation
+        for air-gapped environments.
+        """
+        if os.path.exists(self.notary_checkpoint_file):
+            self._secure_path_permissions(self.notary_checkpoint_file, 0o600)
+            
+        checkpoint = {
+            "latest_hash": entry.get("hash"),
+            "timestamp": entry.get("timestamp_utc"),
+            "agent": entry.get("agent"),
+            "action": entry.get("action_type")
+        }
+        
+        canonical_data = self._canonical_json(checkpoint)
+        
+        signature = hmac.new(
+            self.hmac_key, 
+            canonical_data.encode("utf-8"), 
+            hashlib.sha256
+        ).hexdigest()
+        
+        checkpoint["attestation_signature"] = signature
+        
+        self._atomic_write(self.notary_checkpoint_file, self._canonical_json(checkpoint), encoding="utf-8")
+        self._secure_path_permissions(self.notary_checkpoint_file, 0o400)
+
+    def verify_soc_checkpoint(self) -> bool:
+        """
+        Startup Audit Function: Mathematically verifies the integrity of the checkpoint file.
+        Returns True if the database state is secure, and False if tampering is detected.
+        """
+        # 1. If the checkpoint file does not exist yet (e.g., fresh installation), assume valid and initialize
+        if not os.path.exists(self.notary_checkpoint_file):
+            print("[INFO] Notary checkpoint file not found. Initializing baseline state...")
+            return True
+
+        try:
+            # 2. Read the contents of the local checkpoint manifest
+            with open(self.notary_checkpoint_file, "r", encoding="utf-8") as f:
+                stored_manifest = json.load(f)
+
+            # 3. Extract and isolate the signature from the payload to be re-hashed
+            stored_signature = stored_manifest.pop("attestation_signature", None)
+            if not stored_signature:
+                print("[ALERT] Tamper detected: Cryptographic attestation signature is missing!")
+                return False
+
+            # 4. CANONICALIZATION: Convert the dictionary back to a deterministic JSON string
+            canonical_data = self._canonical_json(stored_manifest)
+
+            # 5. RE-ATTESTATION: Recalculate the HMAC signature using the tool's internal secret key
+            calculated_signature = hmac.new(
+                self.hmac_key, 
+                canonical_data.encode("utf-8"), 
+                hashlib.sha256
+            ).hexdigest()
+
+            # 6. VERIFICATION: Compare signatures using constant-time evaluation to prevent timing attacks
+            if hmac.compare_digest(stored_signature, calculated_signature):
+                print("[SUCCESS] Checkpoint integrity verified. SOC attestation validated mathematically.")
+                return True
+            else:
+                print("[CRITICAL ALERT] DATABASE INTEGRITY COMPROMISED! Unauthorized file modification detected!")
+                return False
+
+        except Exception as e:
+            print(f"[ERROR] Failed to execute startup verification due to technical error: {e}")
+            return False
 
     def _generate_record_id(self) -> str:
         return uuid.uuid4().hex
