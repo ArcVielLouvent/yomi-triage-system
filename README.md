@@ -6,22 +6,38 @@
 
 ---
 
-## SANS Hackathon Compliance Checklist
+##  SANS Hackathon Compliance Checklist
 
 To ensure strict adherence to the "Find Evil!" submission guidelines and make evaluation seamless for the judging panel, all 8 required components are mapped below:
 
 | Requirement | Status | Location / Link |
 | :--- | :---: | :--- |
 | **1. Code Repository & License** | ✅ | Public GitHub Repository. [MIT License](LICENSE) is included in the root directory. |
-| **2. Demo Video (Max 5 Min)** | ✅ | [Watch the Demo Video Here](https://youtube.com/link-to-your-video) |
+| **2. Demo Video (Max 5 Min)** | ✅ | [Watch the Demo Video Here](#) *(Link pending upload)* |
 | **3. Architecture Diagram** | ✅ | Located in [Section 3: System Architecture](#3-system-architecture--data-flow) of this README. |
-| **4. Written Project Description** | ✅ | Full narrative available on our [Devpost Submission Page](https://devpost.com/software/yomi-triage-system). |
-| **5. Dataset Documentation** | ✅ | See [`docs/dataset_documentation.md`](docs/dataset_documentation.md) for data sources, links, and reproducibility. |
-| **6. Accuracy Report** | ✅ | See [`docs/accuracy_report.md`](docs/accuracy_report.md) for false positives, LLM hallucinations, and anti-spoliation tests. |
-| **7. Try-It-Out Instructions** | ✅ | Step-by-step SIFT deployment guide located in [Section 6 & 7](#6-installation--deployment-guide). |
-| **8. Agent Execution Logs** | ✅ | Cryptographic traces with timestamps and token usage preserved in [`yomi_data/yomi_chain_of_custody.jsonl`](yomi_data/yomi_chain_of_custody.jsonl). |
+| **4. Written Project Description** | ✅ | Full narrative available on our [Devpost Submission Page](#). |
+| **5. Dataset Documentation** | ✅ | See `docs/dataset_documentation.md` for data sources, links, and reproducibility. |
+| **6. Accuracy Report** | ✅ | See `docs/accuracy_report.md` for false positives, LLM hallucinations, and anti-spoliation tests. |
+| **7. Try-It-Out Instructions** | ✅ | Step-by-step SIFT deployment guide located in [Section 7: Installation & Deployment](#7-installation--deployment-guide). |
+| **8. Agent Execution Logs** | ✅ | Cryptographic traces with timestamps and token usage preserved in `yomi_data/yomi_chain_of_custody.jsonl`. |
 
 *Note: Datasets (such as the DFRWS 2008 Memory Dump) are not hosted in this repository due to size constraints. Instructions to download and mount them to the SIFT Workstation are detailed in the Dataset Documentation.*
+
+---
+
+## 📑 Table of Contents
+1. [Executive Summary / Problem Statement](#1-executive-summary--problem-statement)
+2. [Core Value Proposition / Key Features](#2-core-value-proposition--key-features)
+3. [System Architecture & Data Flow](#3-system-architecture--data-flow)
+4. [Yomi Core Engines (The Arsenal)](#4-yomi-core-engines-the-arsenal)
+5. [Security & Compliance Framework](#5-security--compliance-framework)
+6. [Prerequisites & System Requirements](#6-prerequisites--system-requirements)
+7. [Installation & Deployment Guide](#7-installation--deployment-guide)
+8. [Usage & Operational Commands](#8-usage--operational-commands)
+9. [Use-Case Scenario & Tactical Playbook](#9-use-case-scenario--tactical-playbook)
+10. [Performance & Scalability Metrics](#10-performance--scalability-metrics)
+11. [Threat Model & Security Boundaries](#11-threat-model--security-boundaries)
+12. [Development Roadmap & Future Scope](#12-development-roadmap--future-scope)
 
 ---
 
@@ -35,15 +51,10 @@ To ensure strict adherence to the "Find Evil!" submission guidelines and make ev
 
 Designed to fulfill SANS's **"Purpose-Built MCP Server"** and **"Direct Agent Extension"** architectural tracks, Yomi delivers production-grade defense:
 
--   **Zero Evidence Spoliation (Type-Safe MCP Server):** The AI physically cannot run destructive commands. Tools are exposed as typed, structured functions (`run_volatility_netscan`, `run_plaso_timeline`). The MCP server handles raw tool output natively and parses it *before* returning it to the LLM, preventing context window overload.
-
--   **Epistemic Doubt & ReAct Self-Correction:** Yomi's "Triad Council" utilizes an epistemic doubt threshold. If the LLM's uncertainty exceeds 40%, it vetoes the containment action and triggers autonomous self-correction or escalates to deeper forensic hunts (e.g., TSK filesystem analysis).
-
--   **Air-Gapped Resilient Engine:** Yomi does not strictly rely on cloud API connectivity. If Gemini credentials are unavailable or the host is network-isolated, Yomi's Circuit Breaker seamlessly falls back to Local On-Premise LLMs (Llama3 via Ollama) and continues triage without internet access.
-
--   **Anti-Spoliation Chain of Custody:** Every autonomous decision and tool execution is mathematically hashed (HMAC-SHA256) and sealed in an append-only JSONL cryptographic ledger, ensuring court admissibility.
-
--   **Root-Cause Hunter & Multi-Source Correlation:** Autonomously cross-references Volatility 3 memory artifacts with Plaso timelines and TSK disk forensics to track "Patient Zero."
+*   **Zero Evidence Spoliation (Type-Safe MCP Server):** The AI physically cannot run destructive commands. Tools are exposed as typed, structured functions (`run_volatility_netscan`, `run_plaso_timeline`). The MCP server handles raw tool output natively and parses it *before* returning it to the LLM, preventing context window overload.
+*   **Epistemic Doubt & ReAct Self-Correction:** Yomi's "Triad Council" utilizes an epistemic doubt threshold. If the LLM's uncertainty exceeds 40%, it vetoes the containment action and triggers autonomous self-correction or escalates to deeper forensic hunts (e.g., eBPF Kernel Tracing or TSK filesystem analysis).
+*   **Air-Gapped Resilient Engine:** Yomi does not strictly rely on cloud API connectivity. If Gemini credentials are unavailable or the host is network-isolated, Yomi's Circuit Breaker seamlessly falls back to Local On-Premise LLMs (Llama3 via Ollama) and continues triage without internet access.
+*   **Anti-Spoliation Chain of Custody:** Every autonomous decision and tool execution is mathematically hashed (HMAC-SHA256) and sealed in an append-only JSONL cryptographic ledger, ensuring court admissibility.
 
 
 ## 3. System Architecture & Data Flow
@@ -111,20 +122,20 @@ sequenceDiagram;
 
     LLM->>MCP: Request execution (e.g., run_volatility_netscan)
     MCP->>MCP: Validate JSON Schema & Target Paths
-    
+
     alt Invalid Schema / Path Traversal Detected
         MCP-->>LLM: JSON Error: "Missing required argument or illegal path"
         LLM->>LLM: Autonomous Self-Correction (Re-evaluates intent)
     else Valid Schema
         MCP->>Bridge: Query tool availability in OS PATH
         Bridge-->>MCP: Returns Absolute Binary Path
-        
+
         alt Tool Not Installed (e.g., Windows Host)
             MCP-->>LLM: Error: "Tool unavailable in current OS"
             LLM->>LLM: Fallback to Alternative Tool/Strategy
         else Tool Found (SIFT Workstation)
             MCP->>SIFT: Execute binary securely (Read-only subprocess)
-            
+
             alt Execution Timeout or Crash
                 SIFT-->>MCP: Non-zero exit code / TimeoutExpired
                 MCP-->>LLM: Error: "Tool execution failed or timed out"
@@ -135,13 +146,30 @@ sequenceDiagram;
                 Parser-->>MCP: Structured text (IoCs only)
                 MCP-->>LLM: Refined Context (Prevents Token Exhaustion)
             end
-            
+
         end
     end
+
 ```
+## 4. Yomi Core Engines (The Arsenal)
 
+Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advanced DFIR subsystems to outmaneuver modern malware:
 
-## 4. Security & Compliance Framework
+-   **The Shadow Net (eBPF Sentinel):** Bypasses standard user-space APIs. Injects C code directly into the Linux Ring-0 Kernel to trace `sys_enter_openat` and `sys_enter_execve`. This provides zero-overhead, un-hideable telemetry to resolve the AI's Epistemic Doubt.
+
+-   **The Lazarus Chamber & Mirage Protocol:** A deep isolation sandbox. Yomi can extract dormant/frozen malware, isolate it, and forcibly awaken it (`SIGCONT`) within a synthetic hallucinated OS environment (Honeytokens like fake `/etc/shadow` or `SAM` registries) to monitor behavioral signatures safely.
+
+-   **Mind-Reader Decompiler:** Autonomously executes Radare2 (`pdf @ main`) against frozen malware to extract Assembly logic, then feeds it back to the OpenClaw LLM to generate a psychological and tactical MITRE profile of the threat actor.
+
+-   **OmniVector Root-Cause Hunter:** Traces "Patient Zero" by correlating Volatility memory artifacts with Plaso super-timelines and TSK deleted file recoveries.
+
+-   **Chronos Reverser Engine:** Automatically generates and GPG-signs verifiable bash scripts to remediate and rollback the specific changes made by the identified malware.
+
+-   **Ghost Protocol:** Triple camouflage. Masquerades the Yomi daemon Python process as a standard OS process (e.g., `svchost.exe` or `[kworker/u4:2]`) to evade malware anti-analysis checks.
+
+-   **Obsidian Torii Gateway:** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`, providing an enterprise-grade command center for operators to monitor the AI's thought process.
+
+## 5. Security & Compliance Framework
 
 Yomi is built with enterprise audit standards to ensure forensic integrity during automated response operations:
 
@@ -152,7 +180,7 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 -   **SOC Notary Checkpoints:** Generates mathematical attestations (in `.sig` files) simulating Hardware Enclave isolation, ensuring analysts can verify the state of the database immediately upon boot.
 
 
-## 5. Prerequisites & System Requirements
+## 6. Prerequisites & System Requirements
 
 -   **Host OS:** SANS SIFT Workstation OVA (Ubuntu-based) is required to fully utilize the 200+ DFIR toolchain. Windows/Mac environments will trigger the OSBridge to run in "Minimal/Passive Mode".
 
@@ -160,102 +188,104 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 
 -   **Python:** 3.10+
 
--   **System Dependencies:** `psutil` (for process manipulation/telemetry), `requests`, `fpdf`, `rich`, `lzma`.
+-   **System Dependencies & Clarification:**
+
+    -   `psutil`: Used **strictly** for baseline host CPU/RAM telemetry. Yomi **does not** use `psutil` for process control or deep monitoring.
+
+    -   *Process Manipulation:* Handled natively via OS-level signals (`SIGSTOP`, `SIGCONT`, `kill -9`).
+
+    -   *Deep Monitoring:* Handled via **eBPF (bcc)** in the kernel space.
 
 -   **SIFT Toolchain Dependencies (Must be in PATH):**
 
-    -   Volatility 3 (`vol.py` / `vol`)
+    -   **Volatility 3** (`vol.py` / `vol`) - *Used for memory network scans, pslist, and fileless malware hunting (malfind).*
 
-    -   Radare2 (`r2`)
+    -   **Radare2** (`r2`) - *Used for deep assembly decompilation and reverse engineering.*
 
-    -   Plaso (`log2timeline.py` / `log2timeline`)
+    -   **Plaso** (`log2timeline.py`) - *Used for cross-OS temporal timeline reconstruction.*
 
-    -   The Sleuth Kit (`fls`, `img_stat`, `icat`)
+    -   **The Sleuth Kit** (`fls`, `img_stat`, `icat`) - *Used for spatial disk forensics and recovering carved/deleted droppers.*
 
     -   `tshark`, `bulk_extractor`, `yara`, `ssdeep`, `strings`, `grep`, `reglookup`, `mftparser`, `scalpel`.
 
-
-## 6. Installation & Deployment Guide
+## 7. Installation & Deployment Guide
 
 **Step 1: Clone into the SIFT Workstation**
 
 ```bash
-git clone https://github.com/ArcVielLouvent/yomi-triage-system.git
+git clone [https://github.com/ArcVielLouvent/yomi-triage-system.git](https://github.com/ArcVielLouvent/yomi-triage-system.git)
 cd yomi-triage-system
 
 ```
 
-**Step 2: Install Required Libraries**
+**Step 2: Install Python Libraries and OS Packages**
 
 ```bash
+# Python dependencies
 python -m pip install -r requirements.txt
-python -m pip install psutil
+
+# For Ring-0 Kernel monitoring (eBPF)
+sudo apt-get install bpfcc-tools linux-headers-$(uname -r) python3-bpfcc
 
 ```
 
-**Step 3: Environment Setup**
+**Step 3: Environment Configuration**
 
-Add your credentials or target dataset paths to your environment:
+You do **not** need to manually configure `.env` files for the API key. Yomi features an Elegant Interactive Onboarding. Simply launch the system, and the Obsidian Torii Gateway will securely prompt and save your API Key to `yomi_data/config.json`.
+
+If you prefer manual environment variables:
 
 ```bash
-export YOMI_GEMINI_API_KEY="AIzaSy...[YOUR_KEY]"
 export YOMI_MEMORY_DUMP_PATH="/cases/evidence/memdump.raw"
 export YOMI_PCAP_PATH="/cases/evidence/capture.pcap"
+export YOMI_GEMINI_API_KEY="AIzaSy...[YOUR_KEY]"
 
 ```
 
+## 8. Usage & Operational Commands
 
-## 7. Usage & Operational Commands
+Yomi uses a centralized CLI entry point (`cli.py`) to manage its various daemons and interfaces.
 
-Yomi is designed to run silently as a daemon or be manually triggered against a specific case file.
+**1. Launch Obsidian Torii Gateway (Interactive TUI & Autonomous Mode):**
 
-**Start the MCP Server (Background service):**
+This is the primary operational mode. It launches the background Sentinel daemon and the front-end Rich TUI.
 
 ```bash
-python yomi_mcp/mcp_server.py
+python yomi_core/cli.py --auto
 
 ```
 
-**Start the Sentinel Daemon (Autonomous Mode):**
+**2. Launch as Background Daemon (Headless):**
+
+Runs Yomi entirely in the background without the TUI.
 
 ```bash
-python yomi_core/sentinel.py
+python yomi_core/cli.py --auto --headless
 
 ```
 
-**Trigger the Autonomous Router Manually (For Testing):**
+**3. Install OS-Level Boot Persistence:**
+
+Installs Yomi as a Systemd service (Linux) or Registry AutoRun (Windows) so it starts autonomously on boot.
 
 ```bash
-python -c "from yomi_core.router import YomiRouter; print(YomiRouter().execute_autonomous_triage('Sample incident context'))"
+python yomi_core/cli.py --install
 
 ```
 
 **Runtime Operational Flags (Environment Variables):**
 
--   `YOMI_ENABLE_GHOST_PROTOCOL=true` : Enables optional GhostProtocol process hiding.
+-   `YOMI_ENABLE_GHOST_PROTOCOL=true` : Enables process camouflage (masquerades as `svchost.exe` or `[kworker/u4:2]`).
 
--   `YOMI_ENABLE_MIRAGE_MODE=true` : Enables Mirage decoy/honeypot deployment during sandbox analysis.
+-   `YOMI_ENABLE_MIRAGE_MODE=true` : Enables honeytoken decoy deployment during Lazarus Chamber sandbox analysis.
 
--   `YOMI_AIR_GAPPED_MODE=true` : Forces local-only LLM fallback (disables Gemini calls).
+-   `YOMI_AIR_GAPPED_MODE=true` : Forces local-only LLM fallback (disables Gemini cloud calls).
 
--   `YOMI_LOCAL_LLM_URL` : Specify custom local inference endpoint (e.g., `[http://127.0.0.1:11434/v1/completions](http://127.0.0.1:11434/v1/completions)`).
+-   `YOMI_LOCAL_LLM_URL` : Specify custom local inference endpoint (e.g., `http://127.0.0.1:11434/v1/completions`).
 
-
-## 8. Use-Case Scenario & Tactical Playbook
+## 9. Use-Case Scenario & Tactical Playbook
 
 ### Scenario: The 5-Second Containment (Beating Autonomous Malware)
-
-1.  **Initial Access:** Adversary (or AI Agent) executes a dropper that attempts to inject shellcode into a running SVCHOST process (T1055).
-
-2.  **Sentinel Telemetry:** The `SwarmOrchestrator` detects high entropy and unusual outbound sockets mapped to a specific PID.
-
-3.  **MCP Invocation:** Sentinel commands the MCP server to run `run_volatility_netscan` against live memory.
-
-4.  **LLM Triage:** OpenClaw gateway evaluates the MCP output. It maps the behavior to `C2_BEACON` and `PE_INJECT`.
-
-5.  **Verdict & Freeze:** With an Epistemic Doubt of < 40%, the Triad Council orders containment. OSBridge issues `SIGSTOP` to the PID, preserving memory state for deep analysis without letting the malware run its encryption routine.
-
-### Threat Resolution and Fallback Paths
 
 ```mermaid
 flowchart TD;
@@ -268,65 +298,99 @@ flowchart TD;
     E -- No --> G[Continue Patrol]
     F --> H{Epistemic Doubt < 40%?}
     H -- Yes --> I[Execute Freeze/Containment]
-    H -- No --> J[Shadow Net / Additional Sensor Fusion]
+    H -- No --> J[Shadow Net eBPF Surveillance]
     J --> F
     I --> K[Forensic Isolation & Static Profiling]
     K --> L[Audit Log Cryptographically Sealed]
 
 ```
 
+1.  **Initial Access:** Adversary (or AI Agent) executes a dropper that attempts to inject shellcode into a running process.
+
+2.  **Sentinel Telemetry:** The `SwarmOrchestrator` detects high entropy and unusual outbound sockets mapped to a specific PID.
+
+3.  **MCP Invocation:** Sentinel commands the MCP server to run `run_volatility_linux_malfind` against live memory.
+
+4.  **LLM Triage:** OpenClaw gateway evaluates the MCP output. It maps the behavior to `C2_BEACON` and `PE_INJECT`.
+
+5.  **Verdict & Freeze:** With an Epistemic Doubt of < 40%, the Triad Council orders containment. OSBridge issues `SIGSTOP` to the PID, preserving memory state for deep analysis without letting the malware run its encryption routine.
+
 ### Supported MITRE ATT&CK Mapping
 
 | **IoE Signature** | **Description** | **MITRE ATT&CK ID** | **Detection Source** |
 | --- | --- | --- | --- |
-| `PE_INJECT` | Process injection and VAD tampering seen in memory scans | T1055 | Volatility netscan |
-| `YR_RANSOMWARE` | High-entropy, mass file IO and encryption-related activity | T1486 | TShark / file system artifacts |
-| `PROC_BAD_DTB` | DKOM / hidden process indicators from kernel memory | T1014 | Volatility / Root Cause Hunter |
-| `PEB_MASQ` | Process masquerading via fake PEB or process title | T1036.004 | Live process telemetry + timeline |
-| `UM_APC` | User-mode APC hook or code injection behavior | T1055.004 | Memory analysis + heuristic correlation |
-| `C2_BEACON` | External beaconing or command channel activity | T1071 | TShark / live socket inspection |
+| `PE_INJECT` | Process injection and VAD tampering seen in memory scans | T1055 | Volatility `malfind` |
+| `YR_RANSOMWARE` | High-entropy, mass file IO and encryption-related activity | T1486 | TShark / TSK FLS |
+| `PROC_BAD_DTB` | DKOM / hidden process indicators from kernel memory | T1014 | Root Cause Hunter |
+| `PEB_MASQ` | Process masquerading via fake PEB or process title | T1036.004 | Live process telemetry |
+| `UM_APC` | User-mode APC hook or code injection behavior | T1055.004 | Memory analysis |
+| `C2_BEACON` | External beaconing or command channel activity | T1071 | TShark / Live sockets |
 
-
-## 9. Performance & Scalability Metrics
+## 10. Performance & Scalability Metrics
 
 Yomi executes forensic workflows magnitudes faster than human analysts. Below is raw, validated telemetry from `telemetry_benchmarks.jsonl` demonstrating consistent ~3.002-second latency from detection to containment logic.
 
 ```json
-{"incident_id": "INCIDENT_PID_0_1780238736", "action": "ESCALATED_TO_SHADOW_NET", "latency_seconds": 3.0025, "human_speed_multiplier": "399.7x Faster", "beat_horizon3_ai": true}
-{"incident_id": "INCIDENT_PID_0_1780238752", "action": "ESCALATED_TO_SHADOW_NET", "latency_seconds": 3.004, "human_speed_multiplier": "399.5x Faster", "beat_horizon3_ai": true}
-{"incident_id": "INCIDENT_PID_0_1780239437", "action": "ESCALATED_TO_SHADOW_NET", "latency_seconds": 3.0016, "human_speed_multiplier": "399.8x Faster", "beat_horizon3_ai": true}
+{
+    "incident_id": "INCIDENT_PID_0_1780238736", 
+    "action": "ESCALATED_TO_SHADOW_NET", 
+    "latency_seconds": 3.0025, 
+    "human_speed_multiplier": "399.7x Faster", 
+    "beat_horizon3_ai": true
+}
+{
+    "incident_id": "INCIDENT_PID_0_1780238752", 
+    "action": "ESCALATED_TO_SHADOW_NET", 
+    "latency_seconds": 3.004, 
+    "human_speed_multiplier": "399.5x Faster", 
+    "beat_horizon3_ai": true
+}
 
 ```
 
 ### Cryptographic Chain of Custody (Audit Log Extraction)
 
-Every LLM decision and tool execution is mathematically sealed. Excerpt from `yomi_chain_of_custody_3.jsonl`:
+Every LLM decision and tool execution is mathematically sealed. Excerpt from `yomi_chain_of_custody.jsonl`(Formatted for readability):
 
-```json
-{"action_type":"ARTIFACT_ANALYSIS","agent":"OMNI_LIBRARY","created_at":"2026-05-31T17:07:23.988412+00:00","description":"Analyzed artifact 'xz-utils' with context hints.","entry_hmac":"1jcemvACMU0PsYdtTOA7zxxqbIHEKCu+nhn6dzDAJ9I=","hash":"cdbd8a859f8abcac971c6d33d144c4158abc1dfcf4a3c674b359ba51c6c704aa","ledger_version":"1.0","metadata":{"artifact_name":"xz-utils","context_hints":["ssh"],"found_matches":0},"previous_hash":"27d76b8ae5e65240a0bacda3a5fe880290008df25842454e6e9552452481cb18","raw_command":"","record_id":"de786514b9e54666b57d0d2eff27c497","timestamp_utc":"2026-05-31T17:07:23.988412+00:00","tool_arguments":{},"unix_time":1780247243.988412}
+{
+    "action_type": "ARTIFACT_ANALYSIS",
+    "agent": "OMNI_LIBRARY",
+    "created_at": "2026-05-31T17:07:23.988412+00:00",
+    "description": "Analyzed artifact 'xz-utils' with context hints.",
+    "entry_hmac": "1jcemvACMU0PsYdtTOA7zxxqbIHEKCu+nhn6dzDAJ9I=",
+    "hash": "cdbd8a859f8abcac971c6d33d144c4158abc1dfcf4a3c674b359ba51c6c704aa",
+    "ledger_version": "1.0",
+    "metadata": {
+        "artifact_name": "xz-utils",
+        "context_hints": ["ssh"],
+        "found_matches": 0
+    },
+    "previous_hash": "27d76b8ae5e65240a0bacda3a5fe880290008df25842454e6e9552452481cb18",
+    "raw_command": "",
+    "record_id": "de786514b9e54666b57d0d2eff27c497",
+    "timestamp_utc": "2026-05-31T17:07:23.988412+00:00",
+    "tool_arguments": {},
+    "unix_time": 1780247243.988412
+}
 
-```
+## 11. Threat Model & Security Boundaries
 
-## 10. Threat Model & Security Boundaries
+-   **LLM Hallucination / Prompt Injection Boundaries:** Yomi treats the LLM purely as an untrusted inference engine. The LLM cannot execute arbitrary bash commands. It must return a structured JSON intent asking to invoke pre-defined MCP tools. If the JSON format is invalid or requests a destructive command, `harness.py` entirely drops the execution.
 
--   **LLM Hallucination / Prompt Injection Boundaries:** Yomi treats the LLM purely as an untrusted inference engine. The LLM *cannot* execute arbitrary bash commands. It must return a structured JSON intent asking to invoke pre-defined MCP tools. If the JSON format is invalid or requests a destructive command, `harness.py` entirely drops the execution.
+-   **Context Exhaustion Protection:** By utilizing the Custom MCP Server model, Yomi prevents LLM context degradation. When `bulk_extractor` or `r2` outputs megabytes of text, the MCP wrapper truncates, parses, and provides only the relevant tactical indicators to the LLM (capped at 2000 chars per stream).
 
--   **Context Exhaustion Protection:** By utilizing the Custom MCP Server model, Yomi prevents LLM context degradation. When `bulk_extractor` or `r2` outputs megabytes of text, the MCP wrapper truncates, parses, and provides only the relevant tactical indicators to the LLM.
+-   **Evidence Spoliation:** All analysis is performed on extracted artifacts or via `SIGSTOP` on live targets. The system never utilizes `SIGCONT` (thaw) to wake up isolated malware on the host OS, relying entirely on Static Analysis (Radare2) or the isolated Lazarus Chamber to prevent accidental detonation.
 
--   **Evidence Spoliation:** All analysis is performed on extracted artifacts or via `SIGSTOP` on live targets. The system never utilizes `SIGCONT` (thaw) to wake up isolated malware on the host OS, relying entirely on Static Analysis (Radare2) to prevent accidental detonation.
-
-
-## 11. Development Roadmap & Future Scope
+## 12. Development Roadmap & Future Scope
 
 While currently built for the SANS SIFT Workstation, Yomi's architecture lays the groundwork for mass commercial deployment:
 
--   **Phase 1 (Current):** Full autonomous incident triage utilizing SIFT tools via MCP.
+-   **Phase 1 (Current):** Full autonomous incident triage utilizing SIFT tools via MCP. Ring-0 monitoring via eBPF.
 
 -   **Phase 2 (The Ephemeral Docker Bridge):** OS-Agnostic Execution. Yomi will run natively on Windows/macOS endpoints. When an analyst asks to inspect a memory dump, the OSBridge will autonomously spin up an ephemeral SIFT Docker container, execute the Volatility command, extract the parsed results, and instantly destroy the container.
 
-
-## 12. License & Attribution
+## License & Attribution
 
 This project is licensed under the **MIT License**. See the `LICENSE` file for details.
 
-Built under the KuroTech banner for the **SANS Institute: Protocol SIFT Find Evil! Hackathon**. Mentions and profound gratitude to the maintainers of the SIFT Workstation, Volatility Foundation, and the open-source DFIR community.
+Built under the **KuroTech** banner for the SANS Institute: Protocol SIFT Find Evil! Hackathon. Mentions and profound gratitude to the maintainers of the SIFT Workstation, Volatility Foundation, and the open-source DFIR community.

@@ -20,7 +20,9 @@ class SiftArsenal:
     def __init__(self):
         self.os_bridge = OSBridge()
 
-    def _validate_target_path(self, path: str, allow_block_device: bool = False) -> Tuple[bool, str]:
+    def _validate_target_path(
+        self, path: str, allow_block_device: bool = False
+    ) -> Tuple[bool, str]:
         if not isinstance(path, str) or not path:
             return False, "Invalid path supplied for forensic tool."
         if not os.path.isabs(path):
@@ -36,10 +38,15 @@ class SiftArsenal:
     def _validate_tool(self, tool_name: str) -> Tuple[bool, str]:
         path = self.os_bridge.get_tool_path(tool_name)
         if not path:
-            return False, f"{tool_name} is unavailable on this host. Install the SIFT Workstation toolchain or add {tool_name} to PATH."
+            return (
+                False,
+                f"{tool_name} is unavailable on this host. Install the SIFT Workstation toolchain or add {tool_name} to PATH.",
+            )
         return True, path
 
-    def _run_subprocess(self, command_list: list[str], tool_name: str, timeout: int = 60) -> dict:
+    def _run_subprocess(
+        self, command_list: list[str], tool_name: str, timeout: int = 60
+    ) -> dict:
         try:
             print(f"\n[YOMI-ARSENAL] Executing {tool_name}: {' '.join(command_list)}")
             result = subprocess.run(
@@ -61,7 +68,9 @@ class SiftArsenal:
             return {
                 "status": "ERROR",
                 "tool": tool_name,
-                "error": stderr or stdout or f"{tool_name} returned {result.returncode}",
+                "error": stderr
+                or stdout
+                or f"{tool_name} returned {result.returncode}",
             }
         except FileNotFoundError:
             return {
@@ -82,9 +91,17 @@ class SiftArsenal:
                 "error": str(exc),
             }
 
-    def _run_pipe(self, left_cmd: list[str], right_cmd: list[str], tool_name: str, timeout: int = 60) -> dict:
+    def _run_pipe(
+        self,
+        left_cmd: list[str],
+        right_cmd: list[str],
+        tool_name: str,
+        timeout: int = 60,
+    ) -> dict:
         try:
-            left = subprocess.Popen(left_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            left = subprocess.Popen(
+                left_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
             right = subprocess.Popen(
                 right_cmd,
                 stdin=left.stdout,
@@ -104,7 +121,9 @@ class SiftArsenal:
             return {
                 "status": "ERROR",
                 "tool": tool_name,
-                "error": stderr.strip() or stdout.strip() or f"{tool_name} returned {right.returncode}",
+                "error": stderr.strip()
+                or stdout.strip()
+                or f"{tool_name} returned {right.returncode}",
             }
         except subprocess.TimeoutExpired:
             return {
@@ -123,7 +142,9 @@ class SiftArsenal:
     # VOLATILITY 3 WRAPPERS (Memory Forensics)
     # -------------------------------------------------------------------------
     def run_volatility_pslist(self, memory_dump_path: str) -> dict:
-        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "volatility_pslist", "error": error}
 
@@ -135,7 +156,9 @@ class SiftArsenal:
         return self._run_subprocess(cmd, "volatility_pslist")
 
     def run_volatility_netscan(self, memory_dump_path: str) -> dict:
-        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "volatility_netscan", "error": error}
 
@@ -147,7 +170,9 @@ class SiftArsenal:
         return self._run_subprocess(cmd, "volatility_netscan")
 
     def run_volatility_cmdline(self, memory_dump_path: str) -> dict:
-        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "volatility_cmdline", "error": error}
 
@@ -158,8 +183,12 @@ class SiftArsenal:
         cmd = [vol_path, "-f", memory_dump_path, "windows.cmdline.CmdLine"]
         return self._run_subprocess(cmd, "volatility_cmdline")
 
-    def run_volatility_yarascan(self, memory_dump_path: str, yara_rules_path: str) -> dict:
-        is_valid, error = self._validate_target_path(memory_dump_path, allow_block_device=True)
+    def run_volatility_yarascan(
+        self, memory_dump_path: str, yara_rules_path: str
+    ) -> dict:
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "volatility_yarascan", "error": error}
 
@@ -168,10 +197,62 @@ class SiftArsenal:
             return {"status": "ERROR", "tool": "volatility_yarascan", "error": vol_path}
 
         if not os.path.isfile(yara_rules_path):
-            return {"status": "ERROR", "tool": "volatility_yarascan", "error": f"YARA rules file not found: {yara_rules_path}"}
+            return {
+                "status": "ERROR",
+                "tool": "volatility_yarascan",
+                "error": f"YARA rules file not found: {yara_rules_path}",
+            }
 
-        cmd = [vol_path, "-f", memory_dump_path, "windows.yarascan.YaraScan", "--yara-file", yara_rules_path]
+        cmd = [
+            vol_path,
+            "-f",
+            memory_dump_path,
+            "windows.yarascan.YaraScan",
+            "--yara-file",
+            yara_rules_path,
+        ]
         return self._run_subprocess(cmd, "volatility_yarascan")
+
+    # -------------------------------------------------------------------------
+    # VOLATILITY 3 ADVANCED EXTENSIONS (Process Injection Hunting)
+    # -------------------------------------------------------------------------
+    def run_volatility_windows_malfind(self, memory_dump_path: str) -> dict:
+        """Scan Windows memory VAD structures for injected shellcode or hidden PEs."""
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility_win_malfind", "error": error}
+
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {
+                "status": "ERROR",
+                "tool": "volatility_win_malfind",
+                "error": vol_path,
+            }
+
+        cmd = [vol_path, "-f", memory_dump_path, "windows.malfind.Malfind"]
+        return self._run_subprocess(cmd, "volatility_win_malfind")
+
+    def run_volatility_linux_malfind(self, memory_dump_path: str) -> dict:
+        """Scan Linux process memory maps for anonymous executable pages or code injection."""
+        is_valid, error = self._validate_target_path(
+            memory_dump_path, allow_block_device=True
+        )
+        if not is_valid:
+            return {"status": "ERROR", "tool": "volatility_lin_malfind", "error": error}
+
+        enabled, vol_path = self._validate_tool("volatility")
+        if not enabled:
+            return {
+                "status": "ERROR",
+                "tool": "volatility_lin_malfind",
+                "error": vol_path,
+            }
+
+        cmd = [vol_path, "-f", memory_dump_path, "linux.malfind.Malfind"]
+        return self._run_subprocess(cmd, "volatility_lin_malfind")
 
     # -------------------------------------------------------------------------
     # RADARE2 WRAPPER (Static/Binary Analysis)
@@ -185,14 +266,25 @@ class SiftArsenal:
         if not enabled:
             return {"status": "ERROR", "tool": "radare2", "error": r2_path}
 
-        cmd = [r2_path, "-q", "-c", "aaa;iz;q", binary_path]
+        # aaa: Analyze all; pdf @ main: Disassemble main; || fallback to entry0; izq: Quick strings
+        cmd = [
+            r2_path,
+            "-q",
+            "-c",
+            "aaa; pdf @ main || pdf @ entry0; izq; q",
+            binary_path,
+        ]
         return self._run_subprocess(cmd, "radare2")
 
     # -------------------------------------------------------------------------
     # PLASO / LOG2TIMELINE WRAPPER (Timeline Forensics)
     # -------------------------------------------------------------------------
-    def run_plaso_timeline(self, target_drive_path: str, output_path: str = "/tmp/timeline.plaso") -> dict:
-        is_valid, error = self._validate_target_path(target_drive_path, allow_block_device=True)
+    def run_plaso_timeline(
+        self, target_drive_path: str, output_path: str = "/tmp/timeline.plaso"
+    ) -> dict:
+        is_valid, error = self._validate_target_path(
+            target_drive_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "plaso_timeline", "error": error}
 
@@ -204,14 +296,17 @@ class SiftArsenal:
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir, exist_ok=True)
 
-        cmd = [plaso_path, "--parsers", "win7,raw", output_path, target_drive_path]
+        # Removed rigid Windows 7 parser lock to achieve full compatibility with Linux/macOS images
+        cmd = [plaso_path, output_path, target_drive_path]
         return self._run_subprocess(cmd, "plaso_timeline", timeout=300)
 
     # -------------------------------------------------------------------------
     # THE SLEUTH KIT WRAPPERS
     # -------------------------------------------------------------------------
     def run_tsk_fls(self, image_path: str) -> dict:
-        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            image_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "tsk_fls", "error": error}
 
@@ -223,7 +318,9 @@ class SiftArsenal:
         return self._run_subprocess(cmd, "tsk_fls")
 
     def run_tsk_img_stat(self, image_path: str) -> dict:
-        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            image_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "tsk_img_stat", "error": error}
 
@@ -234,8 +331,12 @@ class SiftArsenal:
         cmd = [img_stat_path, image_path]
         return self._run_subprocess(cmd, "tsk_img_stat")
 
-    def run_tsk_icat(self, image_path: str, inode_id: str, output_path: str = None) -> dict:
-        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+    def run_tsk_icat(
+        self, image_path: str, inode_id: str, output_path: str = None
+    ) -> dict:
+        is_valid, error = self._validate_target_path(
+            image_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "tsk_icat", "error": error}
 
@@ -244,17 +345,35 @@ class SiftArsenal:
             return {"status": "ERROR", "tool": "tsk_icat", "error": icat_path}
 
         if not inode_id:
-            return {"status": "ERROR", "tool": "tsk_icat", "error": "inode_id is required for icat output."}
+            return {
+                "status": "ERROR",
+                "tool": "tsk_icat",
+                "error": "inode_id is required for icat output.",
+            }
 
         if output_path:
             output_dir = os.path.dirname(output_path)
             if output_dir and not os.path.exists(output_dir):
                 os.makedirs(output_dir, exist_ok=True)
             with open(output_path, "w", encoding="utf-8", errors="ignore") as outfile:
-                result = subprocess.run([icat_path, image_path, inode_id], stdout=outfile, stderr=subprocess.PIPE, text=True, timeout=120)
+                result = subprocess.run(
+                    [icat_path, image_path, inode_id],
+                    stdout=outfile,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=120,
+                )
                 if result.returncode == 0:
-                    return {"status": "SUCCESS", "tool": "tsk_icat", "output": f"Extracted inode {inode_id} to {output_path}"}
-                return {"status": "ERROR", "tool": "tsk_icat", "error": result.stderr.strip()}
+                    return {
+                        "status": "SUCCESS",
+                        "tool": "tsk_icat",
+                        "output": f"Extracted inode {inode_id} to {output_path}",
+                    }
+                return {
+                    "status": "ERROR",
+                    "tool": "tsk_icat",
+                    "error": result.stderr.strip(),
+                }
 
         cmd = [icat_path, image_path, inode_id]
         return self._run_subprocess(cmd, "tsk_icat", timeout=120)
@@ -295,7 +414,9 @@ class SiftArsenal:
         return self._run_subprocess(cmd, "tshark", timeout=120)
 
     def run_bulk_extractor(self, target_path: str, output_dir: str = None) -> dict:
-        is_valid, error = self._validate_target_path(target_path, allow_block_device=True)
+        is_valid, error = self._validate_target_path(
+            target_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "bulk_extractor", "error": error}
 
@@ -320,7 +441,11 @@ class SiftArsenal:
         if not enabled_grep:
             return {"status": "ERROR", "tool": "strings_grep", "error": grep_path}
 
-        return self._run_pipe([strings_path, target_path], [grep_path, "-i", "-F", pattern], "strings_grep")
+        return self._run_pipe(
+            [strings_path, target_path],
+            [grep_path, "-i", "-F", pattern],
+            "strings_grep",
+        )
 
     # -------------------------------------------------------------------------
     # YARA & SIGNATURE SCANNING WRAPPERS
@@ -335,7 +460,11 @@ class SiftArsenal:
             return {"status": "ERROR", "tool": "yara_scan", "error": yara_path}
 
         if not os.path.isfile(rule_path):
-            return {"status": "ERROR", "tool": "yara_scan", "error": f"YARA rule file not found: {rule_path}"}
+            return {
+                "status": "ERROR",
+                "tool": "yara_scan",
+                "error": f"YARA rule file not found: {rule_path}",
+            }
 
         cmd = [yara_path, "-s", rule_path, target_path]
         return self._run_subprocess(cmd, "yara_scan")
@@ -379,8 +508,12 @@ class SiftArsenal:
         cmd = [mftparser_path, mft_path]
         return self._run_subprocess(cmd, "mftparser")
 
-    def run_scalpel(self, image_path: str, config_path: str = None, output_dir: str = None) -> dict:
-        is_valid, error = self._validate_target_path(image_path, allow_block_device=True)
+    def run_scalpel(
+        self, image_path: str, config_path: str = None, output_dir: str = None
+    ) -> dict:
+        is_valid, error = self._validate_target_path(
+            image_path, allow_block_device=True
+        )
         if not is_valid:
             return {"status": "ERROR", "tool": "scalpel", "error": error}
 
@@ -390,7 +523,11 @@ class SiftArsenal:
 
         if config_path:
             if not os.path.isfile(config_path):
-                return {"status": "ERROR", "tool": "scalpel", "error": f"Scalpel config not found: {config_path}"}
+                return {
+                    "status": "ERROR",
+                    "tool": "scalpel",
+                    "error": f"Scalpel config not found: {config_path}",
+                }
 
         output_dir = output_dir or os.path.join(tempfile.gettempdir(), "scalpel")
         os.makedirs(output_dir, exist_ok=True)

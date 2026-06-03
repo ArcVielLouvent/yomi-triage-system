@@ -212,6 +212,32 @@ class YomiMCPServer:
                     "required": ["image_path"],
                 },
             },
+            "run_volatility_windows_malfind": {
+                "description": "Scan Windows memory for injected code or hidden PEs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_dump_path": {
+                            "type": "string",
+                            "description": "Absolute path to the memory dump file.",
+                        }
+                    },
+                    "required": ["memory_dump_path"],
+                },
+            },
+            "run_volatility_linux_malfind": {
+                "description": "Scan Linux memory for injected code or hidden PEs.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_dump_path": {
+                            "type": "string",
+                            "description": "Absolute path to the memory dump file.",
+                        }
+                    },
+                    "required": ["memory_dump_path"],
+                },
+            },
         }
 
     def list_tools(self) -> str:
@@ -229,10 +255,15 @@ class YomiMCPServer:
             indent=4,
         )
 
-    def _validate_string_argument(self, arguments: dict, key: str, required: bool = True) -> tuple[bool, str]:
+    def _validate_string_argument(
+        self, arguments: dict, key: str, required: bool = True
+    ) -> tuple[bool, str]:
         value = arguments.get(key)
         if required and (not isinstance(value, str) or not value):
-            return False, f"Argument '{key}' is required and must be a non-empty string."
+            return (
+                False,
+                f"Argument '{key}' is required and must be a non-empty string.",
+            )
         return True, value
 
     def call_tool(self, tool_name: str, arguments: dict) -> str:
@@ -242,36 +273,81 @@ class YomiMCPServer:
         print(f"\n[MCP SERVER] Intercepted LLM request to execute: {tool_name}")
 
         tool_map = {
-            "run_volatility_pslist": lambda args: self.arsenal.run_volatility_pslist(args["memory_dump_path"]),
-            "run_volatility_netscan": lambda args: self.arsenal.run_volatility_netscan(args["memory_dump_path"]),
-            "run_volatility_cmdline": lambda args: self.arsenal.run_volatility_cmdline(args["memory_dump_path"]),
-            "run_volatility_yarascan": lambda args: self.arsenal.run_volatility_yarascan(args["memory_dump_path"], args["yara_rules_path"]),
-            "run_plaso_timeline": lambda args: self.arsenal.run_plaso_timeline(args["target_drive_path"], args.get("output_path", "/tmp/timeline.plaso")),
+            "run_volatility_pslist": lambda args: self.arsenal.run_volatility_pslist(
+                args["memory_dump_path"]
+            ),
+            "run_volatility_netscan": lambda args: self.arsenal.run_volatility_netscan(
+                args["memory_dump_path"]
+            ),
+            "run_volatility_cmdline": lambda args: self.arsenal.run_volatility_cmdline(
+                args["memory_dump_path"]
+            ),
+            "run_volatility_yarascan": lambda args: self.arsenal.run_volatility_yarascan(
+                args["memory_dump_path"], args["yara_rules_path"]
+            ),
+            "run_plaso_timeline": lambda args: self.arsenal.run_plaso_timeline(
+                args["target_drive_path"],
+                args.get("output_path", "/tmp/timeline.plaso"),
+            ),
             "run_tsk_fls": lambda args: self.arsenal.run_tsk_fls(args["image_path"]),
-            "run_tsk_img_stat": lambda args: self.arsenal.run_tsk_img_stat(args["image_path"]),
-            "run_tsk_icat": lambda args: self.arsenal.run_tsk_icat(args["image_path"], args["inode_id"], args.get("output_path")),
-            "run_tshark_pcap": lambda args: self.arsenal.run_tshark_pcap(args["pcap_path"]),
-            "run_radare2_analysis": lambda args: self.arsenal.run_radare2_analysis(args["binary_path"]),
-            "run_bulk_extractor": lambda args: self.arsenal.run_bulk_extractor(args["target_path"], args.get("output_dir")),
-            "run_strings_grep": lambda args: self.arsenal.run_strings_grep(args["target_path"], args["pattern"]),
-            "run_yara_scan": lambda args: self.arsenal.run_yara_scan(args["target_path"], args["rule_path"]),
-            "run_reglookup": lambda args: self.arsenal.run_reglookup(args["registry_path"]),
+            "run_tsk_img_stat": lambda args: self.arsenal.run_tsk_img_stat(
+                args["image_path"]
+            ),
+            "run_tsk_icat": lambda args: self.arsenal.run_tsk_icat(
+                args["image_path"], args["inode_id"], args.get("output_path")
+            ),
+            "run_tshark_pcap": lambda args: self.arsenal.run_tshark_pcap(
+                args["pcap_path"]
+            ),
+            "run_radare2_analysis": lambda args: self.arsenal.run_radare2_analysis(
+                args["binary_path"]
+            ),
+            "run_bulk_extractor": lambda args: self.arsenal.run_bulk_extractor(
+                args["target_path"], args.get("output_dir")
+            ),
+            "run_strings_grep": lambda args: self.arsenal.run_strings_grep(
+                args["target_path"], args["pattern"]
+            ),
+            "run_yara_scan": lambda args: self.arsenal.run_yara_scan(
+                args["target_path"], args["rule_path"]
+            ),
+            "run_reglookup": lambda args: self.arsenal.run_reglookup(
+                args["registry_path"]
+            ),
             "run_mftparser": lambda args: self.arsenal.run_mftparser(args["mft_path"]),
             "run_ssdeep": lambda args: self.arsenal.run_ssdeep(args["target_path"]),
-            "run_scalpel": lambda args: self.arsenal.run_scalpel(args["image_path"], args.get("config_path"), args.get("output_dir")),
+            "run_scalpel": lambda args: self.arsenal.run_scalpel(
+                args["image_path"], args.get("config_path"), args.get("output_dir")
+            ),
+            "run_volatility_windows_malfind": lambda args: self.arsenal.run_volatility_windows_malfind(
+                args["memory_dump_path"]
+            ),
+            "run_volatility_linux_malfind": lambda args: self.arsenal.run_volatility_linux_malfind(
+                args["memory_dump_path"]
+            ),
         }
 
         try:
             validation_map = {
-                "memory_dump_path": lambda a: self._validate_string_argument(a, "memory_dump_path"),
-                "target_drive_path": lambda a: self._validate_string_argument(a, "target_drive_path"),
+                "memory_dump_path": lambda a: self._validate_string_argument(
+                    a, "memory_dump_path"
+                ),
+                "target_drive_path": lambda a: self._validate_string_argument(
+                    a, "target_drive_path"
+                ),
                 "image_path": lambda a: self._validate_string_argument(a, "image_path"),
                 "pcap_path": lambda a: self._validate_string_argument(a, "pcap_path"),
-                "binary_path": lambda a: self._validate_string_argument(a, "binary_path"),
-                "target_path": lambda a: self._validate_string_argument(a, "target_path"),
+                "binary_path": lambda a: self._validate_string_argument(
+                    a, "binary_path"
+                ),
+                "target_path": lambda a: self._validate_string_argument(
+                    a, "target_path"
+                ),
                 "pattern": lambda a: self._validate_string_argument(a, "pattern"),
                 "rule_path": lambda a: self._validate_string_argument(a, "rule_path"),
-                "registry_path": lambda a: self._validate_string_argument(a, "registry_path"),
+                "registry_path": lambda a: self._validate_string_argument(
+                    a, "registry_path"
+                ),
                 "mft_path": lambda a: self._validate_string_argument(a, "mft_path"),
                 "inode_id": lambda a: self._validate_string_argument(a, "inode_id"),
             }
@@ -291,10 +367,10 @@ class YomiMCPServer:
 
             result = tool_map[tool_name](arguments)
         except KeyError as exc:
-            return json.dumps({"error": f"Missing required argument for {tool_name}: {exc}"})
+            return json.dumps(
+                {"error": f"Missing required argument for {tool_name}: {exc}"}
+            )
         except Exception as exc:
             return json.dumps({"error": f"Unhandled tool execution exception: {exc}"})
 
         return json.dumps({"jsonrpc": "2.0", "result": result, "id": 2})
-
-
