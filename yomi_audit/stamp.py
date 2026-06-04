@@ -1,5 +1,7 @@
 import base64
 import binascii
+import contextlib
+import fcntl
 import hashlib
 import hmac
 import json
@@ -11,6 +13,8 @@ import time
 import uuid
 import shutil
 from datetime import datetime, timezone
+
+import requests
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Audit Module - The Immutable Stamp (v3.0)
@@ -47,11 +51,13 @@ class ImmutableStamp:
         self._secure_directory_permissions()
 
         self.ledger_file = os.path.join(self.data_dir, self.LEDGER_FILENAME)
+        self.ledger_lock_file = self.ledger_file + ".lock"
         self.hmac_key_file = os.path.join(self.data_dir, "audit_hmac.key")
         self.checkpoint_file = os.path.join(self.data_dir, "ledger_checkpoint.bin")
         self.notary_checkpoint_file = os.path.join(
             self.data_dir, "ledger_notary_checkpoint.json"
         )
+        self._ensure_lock_file()
         self.hmac_key = self._load_or_generate_hmac_key()
         self._ensure_ledger_file()
         self._cleanup_corrupt_backups_if_requested()
@@ -70,6 +76,32 @@ class ImmutableStamp:
         except OSError:
             pass
 
+    def _ensure_lock_file(self) -> None:
+        try:
+            with open(self.ledger_lock_file, "a"):
+                pass
+            self._secure_path_permissions(self.ledger_lock_file, 0o600)
+        except OSError:
+            pass
+
+    @contextlib.contextmanager
+    def _locked_resource(self, exclusive: bool = True):
+        """Acquire an OS-level advisory lock for cross-process ledger access."""
+        mode = "r+" if os.path.exists(self.ledger_lock_file) else "a+"
+        with open(self.ledger_lock_file, mode) as lock_handle:
+            lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            try:
+                fcntl.flock(lock_handle.fileno(), lock_type)
+            except OSError:
+                fcntl.flock(lock_handle.fileno(), lock_type)
+            try:
+                yield lock_handle
+            finally:
+                try:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+
     def _ensure_ledger_file(self):
         if not os.path.exists(self.ledger_file):
             self._atomic_write(self.ledger_file, "", encoding="utf-8")
@@ -80,7 +112,13 @@ class ImmutableStamp:
         if env_key:
             key = self._decode_hmac_key(env_key)
             if key is not None:
+                self.hmac_key_source = "env"
                 return key
+
+        kms_key = self._load_hmac_key_from_kms()
+        if kms_key is not None:
+            self.hmac_key_source = "kms"
+            return kms_key
 
         if os.path.exists(self.hmac_key_file):
             try:
@@ -88,6 +126,7 @@ class ImmutableStamp:
                     key = key_file.read().strip()
                 if self._is_valid_hmac_key(key):
                     self._secure_path_permissions(self.hmac_key_file, 0o600)
+                    self.hmac_key_source = "file"
                     return key
             except OSError:
                 pass
@@ -96,6 +135,7 @@ class ImmutableStamp:
             generated_key = os.urandom(self.HMAC_KEY_LENGTH_BYTES)
             self._atomic_write(self.hmac_key_file, generated_key, binary=True)
             self._secure_path_permissions(self.hmac_key_file, 0o600)
+            self.hmac_key_source = "file"
             return generated_key
         except OSError:
             return None
@@ -106,6 +146,71 @@ class ImmutableStamp:
         except (binascii.Error, ValueError):
             key = key_str.encode("utf-8")
         return key if self._is_valid_hmac_key(key) else None
+
+    def _load_hmac_key_from_kms(self) -> bytes | None:
+        provider = os.environ.get("YOMI_AUDIT_HMAC_KMS_PROVIDER", "").strip().lower()
+        if not provider:
+            return None
+
+        if provider == "vault":
+            return self._load_hmac_key_from_vault()
+        if provider == "aws-secrets-manager":
+            return self._load_hmac_key_from_aws_secrets_manager()
+
+        print(
+            f"[YOMI-AUDIT] Unsupported HMAC KMS provider '{provider}'."
+        )
+        return None
+
+    def _load_hmac_key_from_vault(self) -> bytes | None:
+        vault_addr = os.environ.get("YOMI_AUDIT_HMAC_VAULT_ADDR")
+        secret_path = os.environ.get("YOMI_AUDIT_HMAC_VAULT_SECRET_PATH")
+        field_name = os.environ.get("YOMI_AUDIT_HMAC_VAULT_FIELD", "hmac_key")
+        token = os.environ.get("YOMI_AUDIT_HMAC_VAULT_TOKEN")
+        if not vault_addr or not secret_path or not token:
+            print(
+                "[YOMI-AUDIT] Vault KMS configuration incomplete."
+            )
+            return None
+
+        try:
+            headers = {"X-Vault-Token": token}
+            vault_url = f"{vault_addr.rstrip('/')}/v1/{secret_path.lstrip('/')}"
+            response = requests.get(vault_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            payload = response.json().get("data", {})
+            if "data" in payload and isinstance(payload["data"], dict):
+                payload = payload["data"]
+            hmac_secret = payload.get(field_name)
+            if isinstance(hmac_secret, str):
+                return self._decode_hmac_key(hmac_secret)
+
+        except Exception as exc:
+            print(f"[YOMI-AUDIT] Vault KMS lookup failed: {exc}")
+        return None
+
+    def _load_hmac_key_from_aws_secrets_manager(self) -> bytes | None:
+        secret_id = os.environ.get("YOMI_AUDIT_HMAC_KMS_SECRET_ID")
+        if not secret_id:
+            print("[YOMI-AUDIT] AWS Secrets Manager secret ID not configured.")
+            return None
+
+        try:
+            import boto3  # type: ignore
+
+            client = boto3.client("secretsmanager")
+            response = client.get_secret_value(SecretId=secret_id)
+            secret_string = response.get("SecretString")
+            if isinstance(secret_string, str):
+                return self._decode_hmac_key(secret_string)
+            binary_secret = response.get("SecretBinary")
+            if binary_secret is not None:
+                return base64.b64decode(binary_secret)
+        except ImportError:
+            print("[YOMI-AUDIT] boto3 is not installed; AWS secret retrieval unavailable.")
+        except Exception as exc:
+            print(f"[YOMI-AUDIT] AWS Secrets Manager lookup failed: {exc}")
+        return None
 
     def _is_valid_hmac_key(self, key: bytes | bytearray | None) -> bool:
         return (
@@ -162,39 +267,29 @@ class ImmutableStamp:
         backup_name = (
             f"{self.ledger_file}{self.CORRUPT_SUFFIX}.{int(time.time())}.jsonl"
         )
+        metadata_name = f"{backup_name}.metadata.json"
         try:
-            raw_entries = []
-            with open(self.ledger_file, "r", encoding="utf-8") as ledger:
-                for line_number, raw_line in enumerate(ledger, 1):
-                    raw_line = raw_line.rstrip("\n")
-                    parsed = None
-                    try:
-                        parsed = json.loads(raw_line)
-                    except json.JSONDecodeError:
-                        parsed = None
-                    raw_entries.append(
-                        {
-                            "line_number": line_number,
-                            "raw_line": raw_line,
-                            "parsed": parsed,
-                        }
-                    )
+            with self._locked_resource(exclusive=True):
+                shutil.copy2(self.ledger_file, backup_name)
 
-            backup_obj = {
+            backup_meta = {
                 "_corrupt_reason": reason or "Unknown ledger corruption",
                 "_timestamp": datetime.now(timezone.utc).isoformat(),
                 "_source_file": os.path.basename(self.ledger_file),
-                "raw_data": raw_entries,
+                "backup_file": os.path.basename(backup_name),
             }
             self._atomic_write(
-                backup_name,
-                self._canonical_json(backup_obj) + "\n",
+                metadata_name,
+                self._canonical_json(backup_meta) + "\n",
                 encoding="utf-8",
             )
+            self._secure_path_permissions(metadata_name, 0o600)
             details = f" Reason: {reason}" if reason else ""
-            print(f"[YOMI-AUDIT] Corrupted ledger backed up to {backup_name}.{details}")
-        except Exception:
-            pass
+            print(
+                f"[YOMI-AUDIT] Corrupted ledger backed up to {backup_name}.{details}"
+            )
+        except Exception as exc:
+            print(f"[YOMI-AUDIT] Failed to backup corrupted ledger: {exc}")
 
     def _cleanup_corrupt_backups_if_requested(self) -> None:
         purge_flag = os.environ.get("YOMI_AUDIT_PURGE_CORRUPT", "").lower()
@@ -264,59 +359,60 @@ class ImmutableStamp:
         last_hash = previous_hash
         line_number = 0
 
-        with open(self.ledger_file, "r", encoding="utf-8") as ledger:
-            for raw_line in ledger:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                line_number += 1
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(f"Invalid JSON at line {line_number}: {exc.msg}")
+        with self._locked_resource(exclusive=False):
+            with open(self.ledger_file, "r", encoding="utf-8") as ledger:
+                for raw_line in ledger:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    line_number += 1
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"Invalid JSON at line {line_number}: {exc.msg}")
 
-                self._validate_ledger_entry(entry, line_number)
+                    self._validate_ledger_entry(entry, line_number)
 
-                if entry["previous_hash"] != last_hash:
-                    raise ValueError(
-                        f"Broken chain at line {line_number}: expected previous_hash {last_hash}, found {entry['previous_hash']}."
-                    )
-
-                entry_copy = dict(entry)
-                entry_copy.pop("hash", None)
-                expected_hmac = entry_copy.get("entry_hmac")
-
-                actual_hash = self._compute_hash(entry_copy)
-                if actual_hash != entry["hash"]:
-                    legacy_hash = self._compute_legacy_hash(entry_copy)
-                    if legacy_hash != entry["hash"]:
+                    if entry["previous_hash"] != last_hash:
                         raise ValueError(
-                            f"Hash mismatch at line {line_number}: computed {actual_hash} / {legacy_hash}, stored {entry['hash']}."
+                            f"Broken chain at line {line_number}: expected previous_hash {last_hash}, found {entry['previous_hash']}."
                         )
 
-                if expected_hmac is not None:
-                    if not self.hmac_key:
-                        raise ValueError(
-                            f"HMAC present but audit key is unavailable at line {line_number}."
-                        )
-                    hmac_payload = dict(entry_copy)
-                    hmac_payload.pop("entry_hmac", None)
-                    actual_hmac = self._compute_entry_hmac(hmac_payload)
-                    if actual_hmac != expected_hmac:
-                        raise ValueError(
-                            f"HMAC mismatch at line {line_number}: computed {actual_hmac}, stored {expected_hmac}."
-                        )
-                elif self.hmac_key:
-                    if line_number == 1 and entry.get("action_type") == "GENESIS":
-                        print(
-                            "[YOMI-AUDIT] Legacy genesis entry without HMAC accepted for compatibility."
-                        )
-                    else:
-                        raise ValueError(
-                            f"Missing HMAC on ledger entry at line {line_number} while HMAC enforcement is enabled."
-                        )
+                    entry_copy = dict(entry)
+                    entry_copy.pop("hash", None)
+                    expected_hmac = entry_copy.get("entry_hmac")
 
-                last_hash = entry["hash"]
+                    actual_hash = self._compute_hash(entry_copy)
+                    if actual_hash != entry["hash"]:
+                        legacy_hash = self._compute_legacy_hash(entry_copy)
+                        if legacy_hash != entry["hash"]:
+                            raise ValueError(
+                                f"Hash mismatch at line {line_number}: computed {actual_hash} / {legacy_hash}, stored {entry['hash']}."
+                            )
+
+                    if expected_hmac is not None:
+                        if not self.hmac_key:
+                            raise ValueError(
+                                f"HMAC present but audit key is unavailable at line {line_number}."
+                            )
+                        hmac_payload = dict(entry_copy)
+                        hmac_payload.pop("entry_hmac", None)
+                        actual_hmac = self._compute_entry_hmac(hmac_payload)
+                        if actual_hmac != expected_hmac:
+                            raise ValueError(
+                                f"HMAC mismatch at line {line_number}: computed {actual_hmac}, stored {expected_hmac}."
+                            )
+                    elif self.hmac_key:
+                        if line_number == 1 and entry.get("action_type") == "GENESIS":
+                            print(
+                                "[YOMI-AUDIT] Legacy genesis entry without HMAC accepted for compatibility."
+                            )
+                        else:
+                            raise ValueError(
+                                f"Missing HMAC on ledger entry at line {line_number} while HMAC enforcement is enabled."
+                            )
+
+                    last_hash = entry["hash"]
 
         if last_hash == self.GENESIS_PREVIOUS_HASH:
             return self._write_genesis_entry()
@@ -392,13 +488,14 @@ class ImmutableStamp:
 
     def _append_entry(self, entry: dict) -> None:
         serialized = self._canonical_json(entry)
-        with open(self.ledger_file, "a", encoding="utf-8") as ledger:
-            ledger.write(serialized + "\n")
-            ledger.flush()
-            try:
-                os.fsync(ledger.fileno())
-            except OSError:
-                pass
+        with self._locked_resource(exclusive=True):
+            with open(self.ledger_file, "a", encoding="utf-8") as ledger:
+                ledger.write(serialized + "\n")
+                ledger.flush()
+                try:
+                    os.fsync(ledger.fileno())
+                except OSError:
+                    pass
         self._secure_path_permissions(self.ledger_file, 0o600)
         self._anchor_soc_checkpoint(entry)
 

@@ -175,6 +175,10 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 
 -   **HMAC-SHA256 Cryptographic Ledger:** Implements deterministic JSON canonicalization. Every action receives a unique signature keyed with an isolated `audit_hmac.key`, preventing post-incident tampering by threat actors.
 
+-   **Optional KMS-backed HMAC key storage:** Yomi can load the ledger key from a remote key management service when configured via `YOMI_AUDIT_HMAC_KMS_PROVIDER`. If KMS is not configured, it falls back to a local `audit_hmac.key` file with strict `0o600` permissions.
+
+-   **Known limitation:** Local key file fallback is a practical hackathon compromise. In production, HMAC keys should be managed by a hardware-backed KMS/HSM or enterprise secret store to protect against root-level tampering.
+
 -   **Read-Only Forensic Tooling Execution:** Tools exposed to the LLM (like `fls` or `img_stat`) are executed strictly in read-only mode against evidentiary datasets.
 
 -   **SOC Notary Checkpoints:** Generates mathematical attestations (in `.sig` files) simulating Hardware Enclave isolation, ensuring analysts can verify the state of the database immediately upon boot.
@@ -280,6 +284,16 @@ python yomi_core/cli.py --install
 -   `YOMI_ENABLE_MIRAGE_MODE=true` : Enables honeytoken decoy deployment during Lazarus Chamber sandbox analysis.
 
 -   `YOMI_AIR_GAPPED_MODE=true` : Forces local-only LLM fallback (disables Gemini cloud calls).
+
+-   `YOMI_AUDIT_HMAC_KMS_PROVIDER=vault|aws-secrets-manager` : Enables remote HMAC key retrieval for the audit ledger.
+
+-   `YOMI_AUDIT_HMAC_KMS_SECRET_ID` : Configure the secret identifier for AWS Secrets Manager.
+
+-   `YOMI_AUDIT_HMAC_VAULT_ADDR` : Specify Vault endpoint when using HashiCorp Vault.
+
+-   `YOMI_AUDIT_HMAC_VAULT_TOKEN` : Vault authentication token.
+
+-   `YOMI_AUDIT_HMAC_VAULT_SECRET_PATH` : Path to the Vault secret that contains the audit HMAC key.
 
 -   `YOMI_LOCAL_LLM_URL` : Specify custom local inference endpoint (e.g., `http://127.0.0.1:11434/v1/completions`).
 

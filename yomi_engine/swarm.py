@@ -24,7 +24,6 @@ class SwarmOrchestrator:
         self.audit = ImmutableStamp()
         self.arsenal = SiftArsenal()
 
-        self.report_lock = threading.Lock()
         self.active_reports = []
 
     def deploy_swarm(self) -> dict:
