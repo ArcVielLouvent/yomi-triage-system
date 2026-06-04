@@ -82,7 +82,7 @@ class OmniVectorHunter:
         return "No obvious deleted or hidden droppers found in TSK output."
 
     def hunt_root_cause(self, target_pid: int) -> dict:
-        print(f"\n[YOMI-HUNTER] [CYBER-PURPLE] Initiating Root-Cause Hunt for PID {target_pid}...")
+        print(f"\n[YOMI-HUNTER]  Initiating Root-Cause Hunt for PID {target_pid}...")
 
         if not isinstance(target_pid, int) or target_pid <= 0:
             msg = f"Invalid PID for root-cause hunt: {target_pid}. Aborting."
@@ -119,7 +119,7 @@ class OmniVectorHunter:
         }
 
         self.audit.record_action("HUNTER", "ROOT_CAUSE_FOUND", str(hunt_summary))
-        print("[YOMI-HUNTER] [PLASMA BLUE] Root-Cause trace finalized. Awaiting Triad Council assessment.")
+        print("[YOMI-HUNTER]  Root-Cause trace finalized. Awaiting Triad Council assessment.")
 
         return hunt_summary
 

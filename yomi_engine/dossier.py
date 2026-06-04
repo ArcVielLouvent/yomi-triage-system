@@ -104,7 +104,7 @@ class CourtReadyDossier:
 
     def generate_pdf_dossier(self):
         print(
-            "\n[YOMI-DOSSIER] [VOID BLACK] Assembling Court-Ready Cryptographic Dossier..."
+            "\n[YOMI-DOSSIER]  Assembling Court-Ready Cryptographic Dossier..."
         )
 
         # Ingest the narrative from the Weaver
@@ -151,23 +151,23 @@ class CourtReadyDossier:
 
         pdf.output(pdf_filename)
         print(
-            f"[YOMI-DOSSIER] [PLASMA BLUE] Dual-Artifact Compiled:\n -> {pdf_filename}\n -> {txt_filename}"
+            f"[YOMI-DOSSIER] Dual-Artifact Compiled:\n -> {pdf_filename}\n -> {txt_filename}"
         )
 
         # ======================================================================
         # 3. APPLY CRYPTOGRAPHIC SIGNATURES
         # ======================================================================
-        print("[YOMI-DOSSIER] [CYBER-PURPLE] Applying Cryptographic Signatures...")
+        print("[YOMI-DOSSIER]  Applying Cryptographic Signatures...")
 
         # Sign both the PDF and the RAW Text Annex
         pdf_sig = self._sign_artifact(pdf_filename)
         txt_sig = self._sign_artifact(txt_filename)
 
         print(
-            f"[YOMI-DOSSIER] [VOID BLACK] PDF Signature : {pdf_sig.get('mode', 'FAILED')}"
+            f"[YOMI-DOSSIER]  PDF Signature : {pdf_sig.get('mode', 'FAILED')}"
         )
         print(
-            f"[YOMI-DOSSIER] [VOID BLACK] TXT Signature : {txt_sig.get('mode', 'FAILED')}"
+            f"[YOMI-DOSSIER]  TXT Signature : {txt_sig.get('mode', 'FAILED')}"
         )
 
         self.audit.record_action(

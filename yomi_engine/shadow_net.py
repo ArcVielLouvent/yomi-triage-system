@@ -46,7 +46,7 @@ class ShadowNetProtocol:
                 }
 
             msg = f"Deploying micro-hook on PID {target_pid}. Reason: {reason}"
-            print(f"\n[YOMI-SHADOW] [CYBER-PURPLE] {msg}")
+            print(f"\n[YOMI-SHADOW]  {msg}")
             self.audit.record_action("SHADOW_NET", "DEPLOYED", msg)
 
             # 3. Spin up the monitoring thread (The Spy)
@@ -82,7 +82,7 @@ class ShadowNetProtocol:
             self._trigger_zero_doubt_freeze(target_pid)
         else:
             print(
-                f"\n[YOMI-SHADOW] [PLASMA BLUE] Surveillance ended. No malicious kernel activity detected for PID {target_pid}."
+                f"\n[YOMI-SHADOW]  Surveillance ended. No malicious kernel activity detected for PID {target_pid}."
             )
 
         # Cleanup the hook gracefully
@@ -96,7 +96,7 @@ class ShadowNetProtocol:
         Bypasses the Epistemic Engine (Doubt is now 0%) and forces an instant Cryogenic Freeze.
         """
         print(
-            f"[YOMI-SHADOW] [PLASMA BLUE] Epistemic Doubt reduced to 0%. Escalating to Cryogenic Freeze."
+            f"[YOMI-SHADOW]  Epistemic Doubt reduced to 0%. Escalating to Cryogenic Freeze."
         )
 
         # Call OS Bridge directly to execute the freeze (since doubt is resolved and action is strictly verified)

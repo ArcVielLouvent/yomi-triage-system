@@ -361,7 +361,7 @@ class YomiRouter:
 
             if eval_result.get("status") == "SELF_CORRECTION_REQUIRED":
                 print(
-                    f"[YOMI-ROUTER] [CYBER-PURPLE] Epistemic doubt too high ({eval_result.get('doubt')}%). Forcing deeper reasoning..."
+                    f"[YOMI-ROUTER]  Epistemic doubt too high ({eval_result.get('doubt')}%). Forcing deeper reasoning..."
                 )
                 current_context += (
                     f"\n[SYSTEM FEEDBACK]: Your epistemic doubt was too high. Re-evaluate the artifacts, find corroborating evidence, "
@@ -373,7 +373,7 @@ class YomiRouter:
                 "is_vetoed", False
             ):
                 print(
-                    "[YOMI-ROUTER] [PLASMA BLUE] Intent verified and approved by The Judge."
+                    "[YOMI-ROUTER]  Intent verified and approved by The Judge."
                 )
                 return eval_result
 
@@ -388,7 +388,7 @@ class YomiRouter:
                 continue
 
         msg = f"Max self-correction iterations ({self.max_iterations}) reached. Engaging Shadow Net fallback."
-        print(f"\n[YOMI-ROUTER] [VOID BLACK] {msg}")
+        print(f"\n[YOMI-ROUTER]  {msg}")
         self.audit.record_action("ROUTER", "MAX_ITERATIONS_REACHED", msg)
         return {"status": "ESCALATED_TO_SHADOW_NET", "message": msg}
 

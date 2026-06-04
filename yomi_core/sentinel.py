@@ -89,7 +89,7 @@ class SentinelDaemon:
         )
 
     def _zero_prompt_trigger(self, anomaly_data: list):
-        print("\n[SENTINEL] [CYBER-PURPLE] Anomaly verified! Engaging Zero-Prompt Engine...")
+        print("\n[SENTINEL]  Anomaly verified! Engaging Zero-Prompt Engine...")
 
         target_pid = self._extract_pid_from_anomaly(anomaly_data)
         incident_id = f"INCIDENT_PID_{target_pid}_{int(time.time())}"
@@ -107,7 +107,7 @@ class SentinelDaemon:
                 import signal
                 os.kill(target_pid, signal.SIGSTOP)
                 instant_freeze_applied = True
-                print(f"[SENTINEL] [PLASMA BLUE] Time-to-Containment (TTC) achieved. Target frozen. Handing over to AI for deep triage.")
+                print(f"[SENTINEL]  Time-to-Containment (TTC) achieved. Target frozen. Handing over to AI for deep triage.")
                 
                 self.telemetry.stop_timer(incident_id, "INSTANT_DETERMINISTIC_FREEZE")
             except OSError as e:
@@ -144,7 +144,7 @@ class SentinelDaemon:
 
     def start(self):
         self.is_running = True
-        print("\n[SENTINEL] [PLASMA BLUE] Infinite Sentinel Loop initialized. Monitoring system state...")
+        print("\n[SENTINEL]  Infinite Sentinel Loop initialized. Monitoring system state...")
         print("[SENTINEL] Press Ctrl+C to abort daemon.\n")
 
         try:
@@ -171,10 +171,10 @@ class SentinelDaemon:
                             print("[SENTINEL] [BLOOD RED] Critical threat posture engaged.")
                         self._zero_prompt_trigger(anomalies)
                     elif self.threat_level == "SAFE":
-                        print("[SENTINEL] [PLASMA BLUE] No anomalies detected. Maintaining baseline patrol.")
+                        print("[SENTINEL]  No anomalies detected. Maintaining baseline patrol.")
 
                 except Exception as exc:
-                    print("\n[SENTINEL] [VOID BLACK] Internal Loop Error Recovered:")
+                    print("\n[SENTINEL]  Internal Loop Error Recovered:")
                     traceback.print_exc()
 
                 interval = self._get_polling_interval()
@@ -183,7 +183,7 @@ class SentinelDaemon:
                     self._wake_event.clear()
 
         except KeyboardInterrupt:
-            print("\n[SENTINEL] [VOID BLACK] Sentinel Loop manually terminated by Commander.")
+            print("\n[SENTINEL]  Sentinel Loop manually terminated by Commander.")
             self.is_running = False
 
 

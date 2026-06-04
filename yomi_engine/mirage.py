@@ -48,7 +48,7 @@ class MirageProtocol:
             }
 
         print(
-            f"\n[YOMI-MIRAGE] [CYBER-PURPLE] Generating synthetic OS hallucination for PID {target_pid}..."
+            f"\n[YOMI-MIRAGE]  Generating synthetic OS hallucination for PID {target_pid}..."
         )
 
         try:
@@ -58,7 +58,7 @@ class MirageProtocol:
                 env_path = self._generate_windows_mirage(target_pid)
 
             msg = f"Mirage Protocol activated. Synthetic {os_target} honeytokens deployed at {env_path}"
-            print(f"[YOMI-MIRAGE] [PLASMA BLUE] {msg}")
+            print(f"[YOMI-MIRAGE]  {msg}")
             self.audit.record_action("MIRAGE", "HALLUCINATION_DEPLOYED", msg)
 
             return {"status": "SUCCESS", "mirage_path": env_path}

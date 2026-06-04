@@ -39,21 +39,21 @@ class TemporalNarrativeWeaver:
         """
         Ingests the raw ledger and generates a procedural narrative.
         """
-        print("\n[YOMI-WEAVER] [VOID BLACK] Extracting cryptographic ledger data...")
+        print("\n[YOMI-WEAVER]  Extracting cryptographic ledger data...")
         raw_logs = self._fetch_latest_logs(limit=5)
 
         if not raw_logs:
             return "[YOMI-WEAVER] [WARNING] No audit logs available to weave narrative."
 
         print(
-            f"[YOMI-WEAVER] [CYBER-PURPLE] {len(raw_logs)} log entries extracted. Procedurally weaving narrative..."
+            f"[YOMI-WEAVER]  {len(raw_logs)} log entries extracted. Procedurally weaving narrative..."
         )
         time.sleep(1)  # Simulating processing time
 
         # Procedural LLM Simulation: Building the story dynamically from the actual data
         narrative = self._procedural_weaving(raw_logs)
 
-        print("[YOMI-WEAVER] [PLASMA BLUE] Temporal Narrative generated successfully.")
+        print("[YOMI-WEAVER]  Temporal Narrative generated successfully.")
         self.audit.record_action(
             "WEAVER",
             "NARRATIVE_GENERATED",

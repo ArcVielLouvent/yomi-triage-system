@@ -44,7 +44,7 @@ class GhostProtocol:
             self._deep_linux_camouflage(fake_name)
 
         status_msg = f"Deep camouflage engaged. PID {self.original_pid} cloaked as '{fake_name}'."
-        print(f"\n[YOMI-GHOST] [VOID BLACK] {status_msg}")
+        print(f"\n[YOMI-GHOST]  {status_msg}")
         self.audit.record_action("GHOST_PROTOCOL", "CAMOUFLAGE_ENGAGED", status_msg)
 
     def _deep_linux_camouflage(self, fake_name: str):
@@ -82,7 +82,7 @@ class GhostProtocol:
         signal.signal(signal.SIGHUP, self._tamper_handler)  # Catch terminal detach
 
         print(
-            f"[YOMI-GHOST] [VOID BLACK] Anti-Tamper Watchdog armed on PID {self.original_pid}."
+            f"[YOMI-GHOST]  Anti-Tamper Watchdog armed on PID {self.original_pid}."
         )
 
     def _tamper_handler(self, signum, frame):

@@ -103,7 +103,7 @@ class MitreMapper:
 
         total_tactics = sum(len(item["matched_tactics"]) for item in mapped_results)
         print(
-            f"\n[YOMI-MAPPER] [VOID BLACK] Tactical mapping complete. {total_tactics} MITRE signatures identified."
+            f"\n[YOMI-MAPPER]  Tactical mapping complete. {total_tactics} MITRE signatures identified."
         )
         self.audit.record_action(
             "MITRE_MAPPER",

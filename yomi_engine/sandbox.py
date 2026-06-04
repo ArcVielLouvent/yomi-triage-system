@@ -191,7 +191,7 @@ class SandboxEnvironment:
         Secures the binary in the chamber.
         """
         print(
-            f"\n[YOMI-LAZARUS] [VOID BLACK] Preparing Lazarus Chamber for PID {target_pid}..."
+            f"\n[YOMI-LAZARUS]  Preparing Lazarus Chamber for PID {target_pid}..."
         )
 
         # 1. Containment Phase
@@ -203,7 +203,7 @@ class SandboxEnvironment:
             }
 
         msg = f"Target binary secured inside isolation chamber: {contained_path}"
-        print(f"[YOMI-LAZARUS] [PLASMA BLUE] {msg}")
+        print(f"[YOMI-LAZARUS]  {msg}")
         self.audit.record_action("LAZARUS", "CONTAINMENT_SUCCESS", msg)
 
         # 2. The Awakening (Forced Execution / Thaw)
@@ -255,7 +255,7 @@ class SandboxEnvironment:
         thaw_result = self.os_bridge.thaw_process(target_pid)
         if thaw_result.get("status") == "SUCCESS":
             print(
-                f"[YOMI-LAZARUS] [CYBER-PURPLE] Target PID {target_pid} awakened. Commencing behavioral monitoring..."
+                f"[YOMI-LAZARUS]  Target PID {target_pid} awakened. Commencing behavioral monitoring..."
             )
             self.active_sandboxes[target_pid] = contained_path
             self.audit.record_action(
@@ -288,7 +288,7 @@ class SandboxEnvironment:
         from yomi_engine.mind_reader import MindReaderDecompiler
 
         print(
-            f"\n[YOMI-LAZARUS] [PLASMA BLUE] Commencing Autonomous Interrogation on PID {target_pid}..."
+            f"\n[YOMI-LAZARUS]  Commencing Autonomous Interrogation on PID {target_pid}..."
         )
         time.sleep(2)  # Let the sample initialize inside the container
 
@@ -310,12 +310,12 @@ class SandboxEnvironment:
             time.sleep(2)  # Let the sample interact with the decoy environment
         else:
             print(
-                "[YOMI-LAZARUS] [CYBER-PURPLE] Mirage Protocol disabled. Skipping decoy deployment."
+                "[YOMI-LAZARUS]  Mirage Protocol disabled. Skipping decoy deployment."
             )
 
         # 2. Trigger Mind-Reader Decompiler (Reverse Engineering)
         print(
-            f"[YOMI-LAZARUS] [VOID BLACK] Executing Mind-Reader Profiling..."
+            f"[YOMI-LAZARUS]  Executing Mind-Reader Profiling..."
         )
         decompiler = MindReaderDecompiler()
         decompiler.decompile_and_profile(contained_path, target_pid)
@@ -328,7 +328,7 @@ class SandboxEnvironment:
                 f"Cleaned up mini-container for PID {target_pid}.",
             )
 
-        print(f"[YOMI-LAZARUS] [CYBER-PURPLE] Autonomous Interrogation Complete.")
+        print(f"[YOMI-LAZARUS]  Autonomous Interrogation Complete.")
 
 
 

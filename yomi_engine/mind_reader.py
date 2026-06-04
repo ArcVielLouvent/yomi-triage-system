@@ -30,7 +30,7 @@ class MindReaderDecompiler:
         and sends the hex/assembly strings to the LLM for psychological profiling.
         """
         print(
-            f"\n[YOMI-MINDREADER] [VOID BLACK] Initiating deep decompilation on {binary_path}..."
+            f"\n[YOMI-MINDREADER]  Initiating deep decompilation on {binary_path}..."
         )
 
         # 1. Execute Type-Safe Radare2 Wrapper
@@ -43,7 +43,7 @@ class MindReaderDecompiler:
 
         assembly_output = r2_result.get("output", "")
         print(
-            f"[YOMI-MINDREADER] [CYBER-PURPLE] Assembly logic extracted successfully. Performing heuristic profiling..."
+            f"[YOMI-MINDREADER]  Assembly logic extracted successfully. Performing heuristic profiling..."
         )
 
         profiling_context = f"""
@@ -61,7 +61,7 @@ class MindReaderDecompiler:
             "PROFILE_GENERATED",
             f"Psychological profile created for PID {target_pid}",
         )
-        print(f"[YOMI-MINDREADER] [PLASMA BLUE] Hacker psychology profile generated.")
+        print(f"[YOMI-MINDREADER]  Hacker psychology profile generated.")
 
         new_threat_intel = {
             "target": f"Auto-Learned_Threat_PID_{target_pid}",
@@ -78,7 +78,7 @@ class MindReaderDecompiler:
             os.replace(temp_file, self.library.db_file)
 
         print(
-            f"[YOMI-MINDREADER] [VOID BLACK] Threat intel permanently injected into Omni-Library RAG Database."
+            f"[YOMI-MINDREADER]  Threat intel permanently injected into Omni-Library RAG Database."
         )
         self.audit.record_action(
             "MINDREADER",
