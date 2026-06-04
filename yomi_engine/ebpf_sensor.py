@@ -20,7 +20,6 @@ from yomi_mcp.os_bridge import OSBridge
 class eBPFSentinel:
     # --------------------------------------------------------------------------
     # SINGLETON PATTERN: Prevents multiple 2-second LLVM compilations.
-    # The C code is compiled exactly once upon system boot.
     # --------------------------------------------------------------------------
     _instance = None
     _singleton_lock = threading.Lock()
@@ -28,7 +27,8 @@ class eBPFSentinel:
     def __new__(cls):
         with cls._singleton_lock:
             if cls._instance is None:
-                cls._instance = super(eBPFSentinel, cls).__new__(cls)
+                # [FIXED] Standard Python 3 way to avoid infinite recursion
+                cls._instance = super().__new__(cls)
                 cls._instance._initialize()
             return cls._instance
 
@@ -58,14 +58,14 @@ class eBPFSentinel:
 
         BPF_PERF_OUTPUT(malicious_events);
 
-        int trace_syscall_openat(struct pt_regs *ctx, int dfd, const char __user *filename, int flags) {
+        // [FIXED] Kernel modern requires PT_REGS_PARM to extract syscall arguments
+        int trace_syscall_openat(struct pt_regs *ctx) {
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
 
-            // FILTER: Only trace PIDs explicitly injected into the BPF Map by Yomi (Zero Overhead)
             u32 *is_tracked = tracked_pids.lookup(&pid);
             if (is_tracked == NULL) {
-                return 0; // Ignore all other benign OS traffic
+                return 0; // Ignore benign OS traffic
             }
 
             struct data_t data = {};
@@ -73,13 +73,17 @@ class eBPFSentinel:
             data.event_type = 1;
 
             bpf_get_current_comm(&data.comm, sizeof(data.comm));
+            
+            // Extract argument 2 (filename) from openat(dirfd, filename, flags)
+            const char __user *filename = (const char __user *)PT_REGS_PARM2(ctx);
             bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename);
 
             malicious_events.perf_submit(ctx, &data, sizeof(data));
             return 0;
         }
 
-        int trace_syscall_execve(struct pt_regs *ctx, const char __user *filename, const char __user *const __user *argv, const char __user *const __user *envp) {
+        // [FIXED] Extract execve arguments safely via registers
+        int trace_syscall_execve(struct pt_regs *ctx) {
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
 
@@ -93,6 +97,9 @@ class eBPFSentinel:
             data.event_type = 2;
 
             bpf_get_current_comm(&data.comm, sizeof(data.comm));
+            
+            // Extract argument 1 (filename) from execve(filename, argv, envp)
+            const char __user *filename = (const char __user *)PT_REGS_PARM1(ctx);
             bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename);
 
             malicious_events.perf_submit(ctx, &data, sizeof(data));
@@ -101,7 +108,6 @@ class eBPFSentinel:
         """
 
     def arm_sensor(self) -> bool:
-        """Compiles the C payload and injects it into the Linux Kernel."""
         if self.is_armed and self.bpf_instance:
             return True
 
@@ -116,7 +122,6 @@ class eBPFSentinel:
             return False
 
         try:
-            # BCC requires root privileges and linux kernel headers
             from bcc import BPF  # type: ignore
 
             print(
@@ -124,13 +129,11 @@ class eBPFSentinel:
             )
             self.bpf_instance = BPF(text=self.bpf_program)
 
-            # Attach openat
             openat_fn = self.bpf_instance.get_syscall_fnname("openat")
             self.bpf_instance.attach_kprobe(
                 event=openat_fn, fn_name="trace_syscall_openat"
             )
 
-            # Attach execve
             execve_fn = self.bpf_instance.get_syscall_fnname("execve")
             self.bpf_instance.attach_kprobe(
                 event=execve_fn, fn_name="trace_syscall_execve"
@@ -159,7 +162,6 @@ class eBPFSentinel:
             return False
 
     def monitor_pid(self, target_pid: int, duration_sec: int = 3) -> bool:
-        """Injects PID into Kernel BPF Map and listens to the perf buffer."""
         if not self.is_armed or not self.bpf_instance:
             print(
                 "[YOMI-eBPF] [WARNING] eBPF sensor is not armed. Kernel trace data unavailable."
@@ -168,20 +170,18 @@ class eBPFSentinel:
 
         import ctypes
 
-        # 1. Inject PID into BPF Hash Map to activate Ring-0 targeted surveillance
         tracked_pids = self.bpf_instance.get_table("tracked_pids")
         tracked_pids[ctypes.c_uint32(target_pid)] = ctypes.c_uint32(1)
 
         malicious_intent_found = False
 
-        # Callback function when the C code sends data to Python User-Space
         def print_event(cpu, data, size):
             nonlocal malicious_intent_found
             event = self.bpf_instance["malicious_events"].event(data)  # type: ignore
 
             filename = event.filename.decode("utf-8", "replace")
 
-            if event.event_type == 1:  # openat (File Access)
+            if event.event_type == 1:
                 if (
                     "shadow" in filename
                     or "SAM" in filename
@@ -191,7 +191,7 @@ class eBPFSentinel:
                         f"[YOMI-eBPF] [BLOOD RED] KERNEL INTERCEPT: PID {event.pid} accessed restricted file: {filename}"
                     )
                     malicious_intent_found = True
-            elif event.event_type == 2:  # execve (Process Spawning)
+            elif event.event_type == 2:
                 if (
                     "bash" in filename
                     or "sh" in filename
@@ -212,14 +212,12 @@ class eBPFSentinel:
 
         while time.time() - start_time < duration_sec:
             try:
-                # Use the BCC event-driven perf buffer to avoid busy polling CPU spikes
                 self.bpf_instance.perf_buffer_poll(timeout=100)  # type: ignore
                 if malicious_intent_found:
                     break
             except KeyboardInterrupt:
                 break
 
-        # 2. Cleanup: Remove PID from BPF Map to stop surveillance and free Kernel resources
         try:
             del tracked_pids[ctypes.c_uint32(target_pid)]
         except KeyError:
