@@ -1,7 +1,6 @@
 import base64
 import binascii
 import contextlib
-import fcntl
 import hashlib
 import hmac
 import json
@@ -86,21 +85,33 @@ class ImmutableStamp:
 
     @contextlib.contextmanager
     def _locked_resource(self, exclusive: bool = True):
-        """Acquire an OS-level advisory lock for cross-process ledger access."""
+        """
+        Acquire an OS-level advisory lock for cross-process ledger access.
+        Cross-Platform Safe: Bypasses fcntl on Windows to prevent ImportError crashes.
+        """
         mode = "r+" if os.path.exists(self.ledger_lock_file) else "a+"
         with open(self.ledger_lock_file, mode) as lock_handle:
-            lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             try:
-                fcntl.flock(lock_handle.fileno(), lock_type)
-            except OSError:
-                fcntl.flock(lock_handle.fileno(), lock_type)
+                import fcntl
+                has_fcntl = True
+            except ImportError:
+                has_fcntl = False
+
+            if has_fcntl:
+                lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                try:
+                    fcntl.flock(lock_handle.fileno(), lock_type)
+                except OSError:
+                    fcntl.flock(lock_handle.fileno(), lock_type)
+
             try:
                 yield lock_handle
             finally:
-                try:
-                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-                except OSError:
-                    pass
+                if has_fcntl:
+                    try:
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
 
     def _ensure_ledger_file(self):
         if not os.path.exists(self.ledger_file):
