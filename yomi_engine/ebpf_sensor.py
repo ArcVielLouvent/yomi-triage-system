@@ -29,6 +29,7 @@ class eBPFSentinel:
         self.bpf_program = """
         #include <uapi/linux/ptrace.h>
         #include <linux/sched.h>
+        #include <linux/signal.h>
         
         // Data structure to send back to Python user-space
         struct data_t {
@@ -51,10 +52,10 @@ class eBPFSentinel:
             // Extract the target file path they are trying to open
             bpf_probe_read_user_str(&data.filename, sizeof(data.filename), filename);
             
-            // Filter: Only alert if trying to access critical OS files (Honeytokens/Shadow)
-            // Note: In a production eBPF, string comparison is done carefully in C.
-            // For this bridge, we send all file opens by the target PID to Python for analysis.
-            malicious_events.perf_submit(ctx, &data, sizeof(data));
+            if (filename && (strstr(data.filename, "shadow") || strstr(data.filename, "SAM"))) {
+                malicious_events.perf_submit(ctx, &data, sizeof(data));
+                bpf_send_signal(SIGSTOP);
+            }
             
             return 0;
         }
@@ -134,6 +135,7 @@ class eBPFSentinel:
 
         while time.time() - start_time < duration_sec:
             try:
+                # Use the BCC event-driven perf buffer to avoid busy polling.
                 self.bpf_instance.perf_buffer_poll(timeout=100)  # type: ignore
                 if malicious_intent_found:
                     break

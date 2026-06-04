@@ -3,6 +3,9 @@ import time
 import sys
 import shutil
 import threading
+import tempfile
+import subprocess
+import signal
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -71,6 +74,117 @@ class SandboxEnvironment:
             self.audit.record_action("LAZARUS", "CONTAINMENT_ERROR", msg)
             return "ERROR"
 
+    def _create_container_overlay(self, source_path: str) -> dict:
+        timestamp = int(time.time())
+        base_root = os.path.join(self.chamber_dir, f"sandbox_base_{timestamp}")
+        upper_dir = os.path.join(self.chamber_dir, f"sandbox_upper_{timestamp}")
+        work_dir = os.path.join(self.chamber_dir, f"sandbox_work_{timestamp}")
+        mount_dir = os.path.join(self.chamber_dir, f"sandbox_root_{timestamp}")
+
+        os.makedirs(os.path.join(base_root, "bin"), exist_ok=True)
+        os.makedirs(upper_dir, exist_ok=True)
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(mount_dir, exist_ok=True)
+
+        binary_name = os.path.basename(source_path)
+        sandbox_binary = os.path.join(base_root, "bin", binary_name)
+        shutil.copy2(source_path, sandbox_binary)
+        os.chmod(sandbox_binary, 0o700)
+
+        overlay_opts = f"lowerdir={base_root},upperdir={upper_dir},workdir={work_dir}"
+        try:
+            subprocess.run(
+                ["mount", "-t", "overlay", "overlay", "-o", overlay_opts, mount_dir],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            return {
+                "status": "ERROR",
+                "reason": f"OverlayFS mount failed: {exc.stderr.strip() or exc.stdout.strip()}",
+            }
+
+        return {
+            "status": "SUCCESS",
+            "base_root": base_root,
+            "upper_dir": upper_dir,
+            "work_dir": work_dir,
+            "mount_dir": mount_dir,
+            "binary_relpath": f"/bin/{binary_name}",
+        }
+
+    def _launch_in_minicontainer(self, container_info: dict) -> dict:
+        if self.os_bridge.os_type != "Linux":
+            return {
+                "status": "ERROR",
+                "reason": "Mini-container sandboxing is only supported on Linux hosts.",
+            }
+
+        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+            return {
+                "status": "ERROR",
+                "reason": "Root privileges are required to create Linux namespaces and mounts.",
+            }
+
+        command = [
+            "unshare",
+            "-r",
+            "-n",
+            "-m",
+            "--mount-proc",
+            "chroot",
+            container_info["mount_dir"],
+            container_info["binary_relpath"],
+        ]
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                preexec_fn=os.setsid,
+            )
+        except FileNotFoundError as exc:
+            return {
+                "status": "ERROR",
+                "reason": f"Required sandbox command missing: {str(exc)}",
+            }
+        except Exception as exc:
+            return {"status": "ERROR", "reason": str(exc)}
+
+        return {
+            "status": "SUCCESS",
+            "pid": process.pid,
+            "process": process,
+            "mount_dir": container_info["mount_dir"],
+            "container_info": container_info,
+        }
+
+    def _cleanup_container(self, container_info: dict) -> None:
+        mount_dir = container_info.get("mount_dir")
+        try:
+            subprocess.run(
+                ["umount", mount_dir],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except Exception:
+            pass
+
+        for path in (
+            container_info.get("base_root"),
+            container_info.get("upper_dir"),
+            container_info.get("work_dir"),
+            container_info.get("mount_dir"),
+        ):
+            if path:
+                shutil.rmtree(path, ignore_errors=True)
+
     def execute_resurrection(self, target_pid: int, binary_path: str) -> dict:
         """
         The core Lazarus Protocol.
@@ -97,6 +211,48 @@ class SandboxEnvironment:
             f"[YOMI-LAZARUS] [BLOOD RED] Initiating forced resurrection (SIGCONT) on PID {target_pid}..."
         )
 
+        use_minicontainer = os.environ.get("YOMI_USE_MINI_CONTAINER", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+        if use_minicontainer:
+            container_info = self._create_container_overlay(contained_path)
+            if container_info.get("status") != "SUCCESS":
+                return {
+                    "status": "ERROR",
+                    "message": container_info.get("reason", "Failed to create sandbox overlay."),
+                }
+
+            launch_result = self._launch_in_minicontainer(container_info)
+            if launch_result.get("status") != "SUCCESS":
+                return {
+                    "status": "ERROR",
+                    "message": launch_result.get("reason", "Failed to launch mini-container."),
+                }
+
+            sandbox_pid = launch_result["pid"]
+            self.active_sandboxes[sandbox_pid] = container_info["mount_dir"]
+            self.audit.record_action(
+                "LAZARUS",
+                "RESURRECTION_ACTIVE",
+                f"PID {sandbox_pid} started in mini-container for observation.",
+            )
+
+            monitoring_thread = threading.Thread(
+                target=self._monitor_awakened_threat,
+                args=(sandbox_pid, contained_path, container_info, launch_result["process"]),
+                daemon=True,
+            )
+            monitoring_thread.start()
+
+            return {
+                "status": "SUCCESS",
+                "sandbox_pid": sandbox_pid,
+                "chamber_path": contained_path,
+            }
+        thaw_result = self.os_bridge.thaw_process(target_pid)
         if thaw_result.get("status") == "SUCCESS":
             print(
                 f"[YOMI-LAZARUS] [CYBER-PURPLE] Target PID {target_pid} awakened. Commencing behavioral monitoring..."
@@ -108,22 +264,23 @@ class SandboxEnvironment:
                 f"PID {target_pid} successfully thawed for observation.",
             )
 
-            # Start asynchronous monitoring of the awakened process
             monitoring_thread = threading.Thread(
-                target=self._monitor_awakened_threat, args=(target_pid,), daemon=True
+                target=self._monitor_awakened_threat,
+                args=(target_pid, contained_path, None, None),
+                daemon=True,
             )
             monitoring_thread.start()
 
             return {"status": "SUCCESS", "chamber_path": contained_path}
-        else:
-            error_msg = thaw_result.get("reason", "Unknown thawing error")
-            print(f"[YOMI-LAZARUS] [ERROR] Resurrection failed: {error_msg}")
-            self.audit.record_action("LAZARUS", "RESURRECTION_FAILED", error_msg)
-            return {"status": "ERROR", "message": error_msg}
 
-    def _monitor_awakened_threat(self, target_pid: int, contained_path: str):
+        error_msg = thaw_result.get("reason", "Unknown thawing error")
+        print(f"[YOMI-LAZARUS] [ERROR] Resurrection failed: {error_msg}")
+        self.audit.record_action("LAZARUS", "RESURRECTION_FAILED", error_msg)
+        return {"status": "ERROR", "message": error_msg}
+
+    def _monitor_awakened_threat(self, target_pid: int, contained_path: str, container_info=None, process=None):
         """
-        Background daemon observing the awakened malware inside the sandbox.
+        Background daemon observing the awakened sample inside the sandbox.
         AUTONOMOUSLY TRIGGERS The Mirage Protocol and Mind-Reader Decompiler!
         """
         # Dynamic import to prevent circular dependencies
@@ -133,7 +290,14 @@ class SandboxEnvironment:
         print(
             f"\n[YOMI-LAZARUS] [PLASMA BLUE] Commencing Autonomous Interrogation on PID {target_pid}..."
         )
-        time.sleep(2)  # Let the malware wake up
+        time.sleep(2)  # Let the sample initialize inside the container
+
+        if process is not None:
+            try:
+                while process.poll() is None:
+                    time.sleep(1)
+            except Exception:
+                pass
 
         # 1. Optionally deploy Mirage Protocol (Honeytokens) only if explicitly enabled
         if os.environ.get("YOMI_ENABLE_MIRAGE_MODE", "false").lower() in (
@@ -143,7 +307,7 @@ class SandboxEnvironment:
         ):
             mirage = MirageProtocol()
             mirage.deploy_hallucination(target_pid, os_target="LINUX")
-            time.sleep(2)  # Let the malware bite the bait
+            time.sleep(2)  # Let the sample interact with the decoy environment
         else:
             print(
                 "[YOMI-LAZARUS] [CYBER-PURPLE] Mirage Protocol disabled. Skipping decoy deployment."
@@ -155,6 +319,14 @@ class SandboxEnvironment:
         )
         decompiler = MindReaderDecompiler()
         decompiler.decompile_and_profile(contained_path, target_pid)
+
+        if container_info:
+            self._cleanup_container(container_info)
+            self.audit.record_action(
+                "LAZARUS",
+                "CONTAINER_CLEANUP",
+                f"Cleaned up mini-container for PID {target_pid}.",
+            )
 
         print(f"[YOMI-LAZARUS] [CYBER-PURPLE] Autonomous Interrogation Complete.")
 

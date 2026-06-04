@@ -389,6 +389,38 @@ While currently built for the SANS SIFT Workstation, Yomi's architecture lays th
 
 -   **Phase 2 (The Ephemeral Docker Bridge):** OS-Agnostic Execution. Yomi will run natively on Windows/macOS endpoints. When an analyst asks to inspect a memory dump, the OSBridge will autonomously spin up an ephemeral SIFT Docker container, execute the Volatility command, extract the parsed results, and instantly destroy the container.
 
+## 🛡️ Lampiran Arsitektur Keamanan Lanjutan
+
+### 1. Isolasi Mini-Container Ringan
+Untuk mengurangi risiko escape saat menangani sampel yang dapat berbahaya, Yomi menerapkan opsi mini-container dengan:
+- Linux Namespaces: `pid`, `net`, `mount`
+- OverlayFS COW layer: `lowerdir` read-only + `upperdir` writable
+- `chroot` terhadap root filesystem yang sangat terbatas
+- `unshare -r -n -m --mount-proc` untuk memisahkan jaringan dan PID dari host
+
+### 2. Pengolahan Output Besar
+Yomi tidak lagi memuat output alat forensik besar sepenuhnya ke RAM. Sebagai gantinya, toolkit streaming membaca hasil secara bertahap dalam blok kecil (4KB), mengambil hingga 2000 karakter yang relevan, dan kemudian mematikan proses jika perlu untuk mencegah OOM.
+
+### 3. Arsitektur Air-Gapped Lokal
+Untuk sistem terisolasi tanpa internet, Yomi bekerja dengan model lokal ringan yang di-host di mesin:
+- `YOMI_AIR_GAPPED_MODE=true`
+- `YOMI_LOCAL_LLM_URL` menunjuk ke endpoint lokal (seperti Ollama atau Llama.cpp)
+- `MCP Server` melakukan ekstraksi lokal, mereduksi data besar menjadi JSON metadata yang ringkas, lalu mengirimkan ringkasan ini ke LLM lokal.
+
+### 4. Alur Deteksi Kernel ke Keputusan
+```text
+[KERNEL] eBPF mendeteksi aktivitas tidak sah --> SIGSTOP segera pada PID
+    |
+    v
+[MCP] Ekstraksi data lokal / ringkasan JSON
+    |
+    v
+[LLM Lokal] Evaluasi konteks & indikasi
+    |
+    v
+[Triad Council] Keputusan: biarkan / isolasi / hapus
+```
+
 ## License & Attribution
 
 This project is licensed under the **MIT License**. See the `LICENSE` file for details.

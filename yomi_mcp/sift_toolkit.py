@@ -1,7 +1,9 @@
 import os
+import select
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Tuple
 
 # Append root directory to sys.path
@@ -44,21 +46,79 @@ class SiftArsenal:
             )
         return True, path
 
+    def _stream_process_output(
+        self, process: subprocess.Popen, timeout: int = 60
+    ) -> tuple[str, str]:
+        deadline = time.time() + timeout
+        stdout_chunks = []
+        stderr_chunks = []
+        stdout_len = 0
+        stderr_len = 0
+        max_chars = 2000
+
+        while True:
+            if process.poll() is not None:
+                break
+
+            streams = []
+            if process.stdout is not None:
+                streams.append(process.stdout)
+            if process.stderr is not None:
+                streams.append(process.stderr)
+
+            if not streams:
+                break
+
+            ready, _, _ = select.select(streams, [], [], 0.1)
+            if not ready:
+                if time.time() > deadline:
+                    process.kill()
+                    break
+                continue
+
+            for pipe in ready:
+                chunk = pipe.read(4096)
+                if not chunk:
+                    continue
+                if pipe is process.stdout and stdout_len < max_chars:
+                    remaining = max_chars - stdout_len
+                    stdout_chunks.append(chunk[:remaining])
+                    stdout_len += len(chunk[:remaining])
+                if pipe is process.stderr and stderr_len < max_chars:
+                    remaining = max_chars - stderr_len
+                    stderr_chunks.append(chunk[:remaining])
+                    stderr_len += len(chunk[:remaining])
+
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+        return "".join(stdout_chunks).strip(), "".join(stderr_chunks).strip()
+
     def _run_subprocess(
         self, command_list: list[str], tool_name: str, timeout: int = 60
     ) -> dict:
         try:
             print(f"\n[YOMI-ARSENAL] Executing {tool_name}: {' '.join(command_list)}")
-            result = subprocess.run(
+            process = subprocess.Popen(
                 command_list,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
             )
-            stdout = result.stdout.strip()
-            stderr = result.stderr.strip()
 
-            if result.returncode == 0:
+            stdout, stderr = self._stream_process_output(process, timeout)
+
+            if process.returncode is None:
+                process.kill()
+                return {
+                    "status": "ERROR",
+                    "tool": tool_name,
+                    "error": f"{tool_name} execution timed out after {timeout}s.",
+                }
+
+            if process.returncode == 0:
                 return {
                     "status": "SUCCESS",
                     "tool": tool_name,
@@ -68,21 +128,13 @@ class SiftArsenal:
             return {
                 "status": "ERROR",
                 "tool": tool_name,
-                "error": stderr
-                or stdout
-                or f"{tool_name} returned {result.returncode}",
+                "error": stderr or stdout or f"{tool_name} returned {process.returncode}",
             }
         except FileNotFoundError:
             return {
                 "status": "ERROR",
                 "tool": tool_name,
                 "error": f"{tool_name} binary not found in system PATH.",
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "status": "ERROR",
-                "tool": tool_name,
-                "error": f"{tool_name} execution timed out after {timeout}s.",
             }
         except Exception as exc:
             return {
@@ -100,7 +152,10 @@ class SiftArsenal:
     ) -> dict:
         try:
             left = subprocess.Popen(
-                left_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                left_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
             )
             right = subprocess.Popen(
                 right_cmd,
@@ -109,27 +164,26 @@ class SiftArsenal:
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            left.stdout.close()
-            stdout, stderr = right.communicate(timeout=timeout)
+            if left.stdout is not None:
+                left.stdout.close()
+
+            stdout, stderr = self._stream_process_output(right, timeout)
+
+            try:
+                left.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                left.kill()
 
             if right.returncode == 0:
                 return {
                     "status": "SUCCESS",
                     "tool": tool_name,
-                    "output": stdout.strip()[:2000],
+                    "output": stdout[:2000],
                 }
             return {
                 "status": "ERROR",
                 "tool": tool_name,
-                "error": stderr.strip()
-                or stdout.strip()
-                or f"{tool_name} returned {right.returncode}",
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "status": "ERROR",
-                "tool": tool_name,
-                "error": f"{tool_name} timed out after {timeout}s.",
+                "error": stderr or stdout or f"{tool_name} returned {right.returncode}",
             }
         except Exception as exc:
             return {

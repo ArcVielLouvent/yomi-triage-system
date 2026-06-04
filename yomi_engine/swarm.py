@@ -1,8 +1,8 @@
 import ipaddress
+import multiprocessing
 import os
 import re
 import sys
-import threading
 import shutil
 import subprocess
 
@@ -29,22 +29,34 @@ class SwarmOrchestrator:
 
     def deploy_swarm(self) -> dict:
         self.active_reports = []
-        threads = []
+        manager = multiprocessing.Manager()
+        shared_reports = manager.list()
+        processes = []
 
-        agents = [self._memory_agent, self._network_agent]
+        for agent_name in ["memory", "network"]:
+            p = multiprocessing.Process(
+                target=self._agent_process,
+                args=(agent_name, shared_reports),
+            )
+            p.start()
+            processes.append(p)
 
-        for agent in agents:
-            t = threading.Thread(target=agent, daemon=True)
-            threads.append(t)
-            t.start()
+        for p in processes:
+            p.join()
 
-        for t in threads:
-            t.join()
-
+        self.active_reports = list(shared_reports)
         self.audit.record_action(
             "SWARM", "DEPLOYED", "Completed concurrent forensic micro-agent sweep."
         )
         return {"status": "SWARM_COMPLETE", "reports": self.active_reports}
+
+    def _agent_process(self, agent_name: str, shared_reports) -> None:
+        if agent_name == "memory":
+            result = self._memory_agent()
+        else:
+            result = self._network_agent()
+
+        shared_reports.append(result)
 
     def _resolve_memory_dump(self) -> str | None:
         candidates = [
@@ -153,8 +165,7 @@ class SwarmOrchestrator:
             )
             findings.extend(self._live_network_findings())
 
-        with self.report_lock:
-            self.active_reports.append({"agent": "Memory_Agent", "findings": findings})
+        return {"agent": "Memory_Agent", "findings": findings}
 
     def _network_agent(self):
         pcap_path = self._resolve_pcap_capture()
@@ -192,8 +203,7 @@ class SwarmOrchestrator:
             )
             findings.extend(self._live_network_findings())
 
-        with self.report_lock:
-            self.active_reports.append({"agent": "Network_Agent", "findings": findings})
+        return {"agent": "Network_Agent", "findings": findings}
 
 
 if __name__ == "__main__":
