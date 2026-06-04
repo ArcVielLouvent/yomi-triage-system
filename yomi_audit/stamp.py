@@ -1,11 +1,13 @@
 import base64
 import binascii
 import contextlib
+import getpass
 import hashlib
 import hmac
 import json
 import os
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -126,6 +128,12 @@ class ImmutableStamp:
                 self.hmac_key_source = "env"
                 return key
 
+        if os.environ.get("YOMI_AUDIT_HMAC_MODE", "").strip().lower() == "ephemeral":
+            ephemeral_key = self._derive_ephemeral_hmac_key()
+            if ephemeral_key is not None:
+                self.hmac_key_source = "ephemeral"
+                return ephemeral_key
+
         kms_key = self._load_hmac_key_from_kms()
         if kms_key is not None:
             self.hmac_key_source = "kms"
@@ -157,6 +165,56 @@ class ImmutableStamp:
         except (binascii.Error, ValueError):
             key = key_str.encode("utf-8")
         return key if self._is_valid_hmac_key(key) else None
+
+    def _derive_ephemeral_hmac_key(self) -> bytes | None:
+        master_password = os.environ.get("YOMI_AUDIT_MASTER_PASSWORD")
+        if not master_password:
+            if sys.stdin is None or not sys.stdin.isatty():
+                print(
+                    "[YOMI-AUDIT] Ephemeral HMAC mode requires YOMI_AUDIT_MASTER_PASSWORD in non-interactive mode."
+                )
+                return None
+            try:
+                master_password = getpass.getpass("YOMI Audit Master Password: ")
+            except Exception as exc:
+                print(f"[YOMI-AUDIT] Failed to read master password: {exc}")
+                return None
+
+        if not master_password:
+            print("[YOMI-AUDIT] Empty master password is not allowed for ephemeral HMAC mode.")
+            return None
+
+        salt = self._load_or_create_ephemeral_salt()
+        return self._derive_hmac_key_from_password(master_password, salt)
+
+    def _derive_hmac_key_from_password(self, password: str, salt: bytes) -> bytes:
+        return hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            250_000,
+            dklen=self.HMAC_KEY_LENGTH_BYTES,
+        )
+
+    def _load_or_create_ephemeral_salt(self) -> bytes:
+        salt_file = os.path.join(self.data_dir, "audit_hmac.salt")
+        if os.path.exists(salt_file):
+            try:
+                with open(salt_file, "rb") as f:
+                    salt = f.read()
+                if isinstance(salt, (bytes, bytearray)) and len(salt) >= 16:
+                    self._secure_path_permissions(salt_file, 0o600)
+                    return salt
+            except OSError:
+                pass
+
+        salt = os.urandom(16)
+        try:
+            self._atomic_write(salt_file, salt, binary=True)
+            self._secure_path_permissions(salt_file, 0o600)
+        except OSError:
+            pass
+        return salt
 
     def _load_hmac_key_from_kms(self) -> bytes | None:
         provider = os.environ.get("YOMI_AUDIT_HMAC_KMS_PROVIDER", "").strip().lower()

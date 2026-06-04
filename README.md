@@ -177,6 +177,8 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 
 -   **Optional KMS-backed HMAC key storage:** Yomi can load the ledger key from a remote key management service when configured via `YOMI_AUDIT_HMAC_KMS_PROVIDER`. If KMS is not configured, it falls back to a local `audit_hmac.key` file with strict `0o600` permissions.
 
+-   **Air-gapped ephemeral HMAC key mode:** Set `YOMI_AUDIT_HMAC_MODE=ephemeral` and provide `YOMI_AUDIT_MASTER_PASSWORD` to derive the HMAC key in memory only via PBKDF2. The key is never written to disk; only a non-sensitive salt file is stored for consistent derivation.
+
 -   **Known limitation:** Local key file fallback is a practical hackathon compromise. In production, HMAC keys should be managed by a hardware-backed KMS/HSM or enterprise secret store to protect against root-level tampering.
 
 -   **Read-Only Forensic Tooling Execution:** Tools exposed to the LLM (like `fls` or `img_stat`) are executed strictly in read-only mode against evidentiary datasets.
@@ -285,6 +287,10 @@ python yomi_core/cli.py --install
 
 -   `YOMI_AIR_GAPPED_MODE=true` : Forces local-only LLM fallback (disables Gemini cloud calls).
 
+-   `YOMI_AUDIT_HMAC_MODE=ephemeral` : Enables zero-disk, password-derived HMAC key generation for air-gapped deployments.
+
+-   `YOMI_AUDIT_MASTER_PASSWORD` : Master password used to derive the audit HMAC key in ephemeral mode.
+
 -   `YOMI_AUDIT_HMAC_KMS_PROVIDER=vault|aws-secrets-manager` : Enables remote HMAC key retrieval for the audit ledger.
 
 -   `YOMI_AUDIT_HMAC_KMS_SECRET_ID` : Configure the secret identifier for AWS Secrets Manager.
@@ -366,6 +372,7 @@ Yomi executes forensic workflows magnitudes faster than human analysts. Below is
 
 Every LLM decision and tool execution is mathematically sealed. Excerpt from `yomi_chain_of_custody.jsonl`(Formatted for readability):
 
+```json
 {
     "action_type": "ARTIFACT_ANALYSIS",
     "agent": "OMNI_LIBRARY",
@@ -386,6 +393,7 @@ Every LLM decision and tool execution is mathematically sealed. Excerpt from `yo
     "tool_arguments": {},
     "unix_time": 1780247243.988412
 }
+```
 
 ## 11. Threat Model & Security Boundaries
 
@@ -403,36 +411,36 @@ While currently built for the SANS SIFT Workstation, Yomi's architecture lays th
 
 -   **Phase 2 (The Ephemeral Docker Bridge):** OS-Agnostic Execution. Yomi will run natively on Windows/macOS endpoints. When an analyst asks to inspect a memory dump, the OSBridge will autonomously spin up an ephemeral SIFT Docker container, execute the Volatility command, extract the parsed results, and instantly destroy the container.
 
-## 🛡️ Lampiran Arsitektur Keamanan Lanjutan
+## Advanced Security Architecture Attachment
 
-### 1. Isolasi Mini-Container Ringan
-Untuk mengurangi risiko escape saat menangani sampel yang dapat berbahaya, Yomi menerapkan opsi mini-container dengan:
+### 1. Lightweight Mini-Container Isolation
+To reduce the risk of escape when handling potentially malicious samples, Yomi implements a mini-container option with:
 - Linux Namespaces: `pid`, `net`, `mount`
 - OverlayFS COW layer: `lowerdir` read-only + `upperdir` writable
-- `chroot` terhadap root filesystem yang sangat terbatas
-- `unshare -r -n -m --mount-proc` untuk memisahkan jaringan dan PID dari host
+- `chroot` against a highly restricted root filesystem
+- `unshare -r -n -m --mount-proc` to separate network and PID from host
 
-### 2. Pengolahan Output Besar
-Yomi tidak lagi memuat output alat forensik besar sepenuhnya ke RAM. Sebagai gantinya, toolkit streaming membaca hasil secara bertahap dalam blok kecil (4KB), mengambil hingga 2000 karakter yang relevan, dan kemudian mematikan proses jika perlu untuk mencegah OOM.
+### 2. Large Output Processing
+Yomi no longer loads large forensic tool output entirely into RAM. Instead, the streaming toolkit reads results incrementally in small blocks (4KB), extracts up to 2000 relevant characters, and then kills the process if necessary to prevent OOM.
 
-### 3. Arsitektur Air-Gapped Lokal
-Untuk sistem terisolasi tanpa internet, Yomi bekerja dengan model lokal ringan yang di-host di mesin:
+### 3. Local Air-Gapped Architecture
+For isolated systems without the internet, Yomi operates with a lightweight local model hosted on the machine:
 - `YOMI_AIR_GAPPED_MODE=true`
-- `YOMI_LOCAL_LLM_URL` menunjuk ke endpoint lokal (seperti Ollama atau Llama.cpp)
-- `MCP Server` melakukan ekstraksi lokal, mereduksi data besar menjadi JSON metadata yang ringkas, lalu mengirimkan ringkasan ini ke LLM lokal.
+- `YOMI_LOCAL_LLM_URL` points to a local endpoint (such as Ollama or Llama.cpp)
+- `MCP Server` performs local extraction, reducing large data sets to compact JSON metadata, and then sends this summary to the local LLM.
 
-### 4. Alur Deteksi Kernel ke Keputusan
+### 4. Kernel Detection-to-Decision Flow
 ```text
-[KERNEL] eBPF mendeteksi aktivitas tidak sah --> SIGSTOP segera pada PID
-    |
-    v
-[MCP] Ekstraksi data lokal / ringkasan JSON
-    |
-    v
-[LLM Lokal] Evaluasi konteks & indikasi
-    |
-    v
-[Triad Council] Keputusan: biarkan / isolasi / hapus
+[KERNEL] eBPF detects unauthorized activity --> SIGSTOP immediately on PID
+|
+v
+[MCP] Local data extraction / JSON summary
+|
+v
+[Local LLM] Context & indication evaluation
+|
+v
+[Triad Council] Decision: leave / isolate / delete
 ```
 
 ## License & Attribution
