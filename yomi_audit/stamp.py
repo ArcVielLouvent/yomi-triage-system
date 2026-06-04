@@ -176,6 +176,11 @@ class ImmutableStamp:
                 return None
             try:
                 master_password = getpass.getpass("YOMI Audit Master Password: ")
+                if not os.path.exists(os.path.join(self.data_dir, "audit_hmac.salt")):
+                    confirm_password = getpass.getpass("Confirm Master Password: ")
+                    if master_password != confirm_password:
+                        print("[YOMI-AUDIT] Passwords do not match. Aborting HMAC initialization.")
+                        return None
             except Exception as exc:
                 print(f"[YOMI-AUDIT] Failed to read master password: {exc}")
                 return None
