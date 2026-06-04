@@ -14,7 +14,6 @@ from yomi_mcp.os_bridge import OSBridge
 # Purpose: Ring-0 Kernel Interception. Injects C code via LLVM BPF Compiler.
 #          Migrated to Tracepoints (Stable ABI) for modern Linux v4.17+ support.
 #          Uses BPF Hash Maps for zero-overhead, surgically targeted telemetry.
-#          NO MOCKS. NO SIMULATIONS. PURE DFIR/EDR TELEMETRY.
 # ==============================================================================
 
 
