@@ -11,16 +11,14 @@ from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - eBPF Sentinel
-# Purpose: Ring-0 Kernel Interception. Injects C code via LLVM BPF Compiler.
-#          Migrated to Tracepoints (Stable ABI) for modern Linux v4.17+ support.
-#          Uses BPF Hash Maps for zero-overhead, surgically targeted telemetry.
+# Purpose: Ring-0 Kernel Interception via Tracepoints (Stable ABI).
+#          - Zero-overhead targeted telemetry via BPF Hash Maps.
+#          - Cryptographic Ledger integration for SANS Audit Trail.
+#          - Context-Aware Path Matching (Zero False-Positive Defense).
 # ==============================================================================
 
 
 class eBPFSentinel:
-    # --------------------------------------------------------------------------
-    # SINGLETON PATTERN: Prevents multiple LLVM compilations.
-    # --------------------------------------------------------------------------
     _instance = None
     _singleton_lock = threading.Lock()
 
@@ -37,14 +35,10 @@ class eBPFSentinel:
         self.bpf_instance = None
         self.is_armed = False
 
-        # ----------------------------------------------------------------------
-        # THE KERNEL PAYLOAD (Tracepoint Implementation - Kernel v4.17+ Safe)
-        # ----------------------------------------------------------------------
         self.bpf_program = """
         #include <uapi/linux/ptrace.h>
         #include <linux/sched.h>
 
-        // BPF Hash map to store PIDs targeted by the Shadow Net
         BPF_HASH(tracked_pids, u32, u32);
 
         struct data_t {
@@ -56,12 +50,10 @@ class eBPFSentinel:
 
         BPF_PERF_OUTPUT(malicious_events);
 
-        // [SAFE] Tracepoint implementation for openat (File Access)
         TRACEPOINT_PROBE(syscalls, sys_enter_openat) {
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
 
-            // FILTER: Only trace PIDs explicitly injected into the map
             u32 *is_tracked = tracked_pids.lookup(&pid);
             if (is_tracked == NULL) {
                 return 0; 
@@ -72,13 +64,16 @@ class eBPFSentinel:
             data.event_type = 1;
 
             bpf_get_current_comm(&data.comm, sizeof(data.comm));
-            bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
+            
+            int ret = bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
+            if (ret <= 0) {
+                return 0; 
+            }
 
             malicious_events.perf_submit(args, &data, sizeof(data));
             return 0;
         }
 
-        // [SAFE] Tracepoint implementation for execve (Process Spawning)
         TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
@@ -93,7 +88,11 @@ class eBPFSentinel:
             data.event_type = 2;
 
             bpf_get_current_comm(&data.comm, sizeof(data.comm));
-            bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
+            
+            int ret = bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args->filename);
+            if (ret <= 0) {
+                return 0; 
+            }
 
             malicious_events.perf_submit(args, &data, sizeof(data));
             return 0;
@@ -109,46 +108,38 @@ class eBPFSentinel:
             "CODESPACES_LINUX",
             "LINUX",
         ]:
-            print(
-                "[eBPF] Hardware unsupported for direct Kernel injection. Linux Kernel required."
-            )
+            print("[YOMI-eBPF] [ERROR] Unsupported OS. Linux Kernel required.")
             return False
 
         try:
             from bcc import BPF  # type: ignore
 
-            print(
-                "[YOMI-eBPF]  Compiling Tracepoint payload via LLVM and injecting into Ring-0 Kernel..."
-            )
+            print("[YOMI-eBPF] [INFO] Compiling Tracepoint payload via LLVM...")
             self.bpf_instance = BPF(text=self.bpf_program)
-
             self.is_armed = True
+
             print(
-                "[YOMI-eBPF]  eBPF Sentinel Armed via Tracepoints. Waiting for targeted PID injection."
+                "[YOMI-eBPF] [INFO] Ring-0 Sentinel Armed. Awaiting target injection."
             )
             self.audit.record_action(
                 "eBPF",
                 "ARMED",
-                "Kernel tracepoints (sys_enter_openat, sys_enter_execve) injected globally.",
+                "Kernel tracepoints (openat, execve) injected globally.",
             )
             return True
 
         except ImportError:
             print(
-                "[YOMI-eBPF] [WARNING] BCC library not found. Kernel syscall tracing unavailable."
+                "[YOMI-eBPF] [ERROR] BCC library not found. Kernel tracing unavailable."
             )
             return False
         except Exception as e:
-            print(
-                f"[YOMI-eBPF] [ERROR] Kernel Injection Failed (Root privileges required): {str(e)}"
-            )
+            print(f"[YOMI-eBPF] [ERROR] Kernel Injection Failed: {str(e)}")
             return False
 
     def monitor_pid(self, target_pid: int, duration_sec: int = 3) -> bool:
         if not self.is_armed or not self.bpf_instance:
-            print(
-                "[YOMI-eBPF] [WARNING] eBPF sensor is not armed. Kernel trace data unavailable."
-            )
+            print("[YOMI-eBPF] [WARNING] Sensor not armed.")
             return False
 
         import ctypes
@@ -158,31 +149,49 @@ class eBPFSentinel:
 
         malicious_intent_found = False
 
+        # Define shell executables
+        critical_shells = {"bash", "sh", "dash", "zsh", "cmd.exe", "powershell", "pwsh"}
+
         def print_event(cpu, data, size):
             nonlocal malicious_intent_found
 
             event = self.bpf_instance["malicious_events"].event(data)  # type: ignore
-            filename = event.filename.decode("utf-8", "replace")
+            raw_filename = event.filename.decode("utf-8", "replace").strip()
+            base_name = os.path.basename(raw_filename)
 
             if event.event_type == 1:
+                is_threat = False
+
                 if (
-                    "shadow" in filename
-                    or "SAM" in filename
-                    or "ssh/id_rsa" in filename
+                    "/etc/shadow" in raw_filename
+                    or "/etc/passwd" in raw_filename
+                    or "/root/.ssh" in raw_filename
+                    or "/etc/sudoers" in raw_filename
                 ):
-                    print(
-                        f"[YOMI-eBPF] [BLOOD RED] KERNEL TRACEPOINT INTERCEPT: PID {event.pid} accessed restricted file: {filename}"
+                    is_threat = True
+                elif base_name in {"shadow", "gshadow", "SAM", "SYSTEM", "id_rsa"}:
+                    is_threat = True
+
+                if is_threat:
+                    msg = f"PID {event.pid} accessed critical file: {raw_filename}"
+                    print(f"[YOMI-eBPF] [ALERT] {msg}")
+                    self.audit.record_action(
+                        "eBPF_SENSOR",
+                        "THREAT_DETECTED_OPENAT",
+                        msg,
+                        metadata={"pid": event.pid, "file": raw_filename},
                     )
                     malicious_intent_found = True
+
             elif event.event_type == 2:
-                if (
-                    "bash" in filename
-                    or "sh" in filename
-                    or "cmd" in filename
-                    or "powershell" in filename
-                ):
-                    print(
-                        f"[YOMI-eBPF] [BLOOD RED] KERNEL TRACEPOINT INTERCEPT: PID {event.pid} spawned suspicious shell: {filename}"
+                if base_name in critical_shells:
+                    msg = f"PID {event.pid} spawned shell/interpreter: {raw_filename}"
+                    print(f"[YOMI-eBPF] [ALERT] {msg}")
+                    self.audit.record_action(
+                        "eBPF_SENSOR",
+                        "THREAT_DETECTED_EXECVE",
+                        msg,
+                        metadata={"pid": event.pid, "file": raw_filename},
                     )
                     malicious_intent_found = True
 
@@ -190,7 +199,7 @@ class eBPFSentinel:
         events_table.open_perf_buffer(print_event)  # type: ignore
 
         start_time = time.time()
-        print(f"[YOMI-eBPF]  Tracepoint telemetry locked onto PID {target_pid}...")
+        print(f"[YOMI-eBPF] [INFO] Telemetry locked onto PID {target_pid}...")
 
         while time.time() - start_time < duration_sec:
             try:
@@ -198,13 +207,11 @@ class eBPFSentinel:
                 if malicious_intent_found:
                     break
 
-                # CPU Anti-Spinning protection (Zero-Overhead Enforcement)
+                # Zero-Overhead Enforcement
                 time.sleep(0.01)
-
             except KeyboardInterrupt:
                 break
 
-        # Cleanup: Remove PID from BPF Map to cease surveillance
         try:
             del tracked_pids[ctypes.c_uint32(target_pid)]
         except KeyError:
@@ -213,39 +220,36 @@ class eBPFSentinel:
         return malicious_intent_found
 
 
-# ==============================================================================
-# PRODUCTION RUNNER (CLI EXECUTION)
-# Accepts real PID from the OS. Zero mock/simulation data.
-# Usage: sudo python3 ebpf_sensor.py <TARGET_PID>
-# ==============================================================================
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("[!] Usage: sudo python3 ebpf_sensor.py <TARGET_PID>")
+        print("Usage: sudo python3 ebpf_sensor.py <TARGET_PID>")
         sys.exit(1)
 
     try:
         target_pid = int(sys.argv[1])
     except ValueError:
-        print("[-] Invalid PID format. Please provide an integer.")
+        print("Error: Invalid PID format.")
         sys.exit(1)
 
     if os.geteuid() != 0:
-        print(
-            "[-] [CRITICAL] eBPF Sentinel requires root privileges. Please run with 'sudo'."
-        )
+        print("Error: eBPF Sentinel requires root privileges (sudo).")
         sys.exit(1)
 
     if not os.path.exists(f"/proc/{target_pid}"):
-        print(f"[-] [ERROR] Target PID {target_pid} does not exist in the system.")
+        print(f"Error: Target PID {target_pid} does not exist.")
         sys.exit(1)
 
     sensor = eBPFSentinel()
-
-    print(f"[+] Initializing Ring-0 interception engine...")
     if sensor.arm_sensor():
-        detection_status = sensor.monitor_pid(target_pid, duration_sec=30)
-        print(
-            f"[+] Surveillance ended. Malicious signature match status: {detection_status}"
-        )
+        print(f"[+] Commencing OS telemetry on PID {target_pid} (60s).")
+        detected = sensor.monitor_pid(target_pid, duration_sec=60)
+        print(f"[+] Telemetry concluded. Threat detected: {detected}")
+        
+        if detected:
+            sys.exit(2)
+        else:
+            sys.exit(0)
     else:
-        print("[-] Failed to arm eBPF Sentinel.")
+        print("[-] Initialization failed.")
+        sys.exit(1)
+    
