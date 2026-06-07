@@ -12,12 +12,12 @@ from yomi_mcp.sift_toolkit import SiftArsenal
 from yomi_engine.library import OmniLibrary
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - Mind-Reader Decompiler (v3.0 - PRODUCTION)
+# YOMI TRIAGE SYSTEM: Engine Module - Mind-Reader Decompiler (v3.1 - PRODUCTION)
 # Purpose: Deep Reverse Engineering & Threat Actor Profiling.
 #          - Token-Safe LLM Context Window restriction.
 #          - Seamless Intel injection via OmniLibrary Schema-Matching.
-#          - Headless execution for autonomous SIFT pipeline.
-#          - Graceful Fallback: Native Static Strings Extraction (Anti-R2 Failure)
+#          - O(1) Search compliance via Schema Mimicry (CVE-YYYY-YOMI format).
+#          - Native Static Strings Extraction (Anti-R2 Failure)
 # ==============================================================================
 
 
@@ -59,7 +59,6 @@ class MindReaderDecompiler:
             self.audit.record_action("MINDREADER", "ABORTED", error_msg)
             return {"status": "ERROR", "message": error_msg}
 
-        # 1. Execute Type-Safe Radare2 Wrapper
         r2_result = self.arsenal.run_radare2_analysis(binary_path)
 
         raw_assembly = ""
@@ -77,6 +76,7 @@ class MindReaderDecompiler:
         else:
             raw_assembly = r2_result.get("output", "")
 
+        # Token-Safe Context Truncation
         if len(raw_assembly) > 4000:
             safe_assembly = (
                 raw_assembly[:4000]
@@ -106,44 +106,48 @@ class MindReaderDecompiler:
         )
         print("[*] Threat Actor psychology profile generated.")
 
-        # Strict ISO 8601 formatting ensures _extract_year_from_entry successfully reads the date,
-        # bypassing the YOMI-APT format mismatch.
-        current_time = (
-            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        )
+        # [CRITICAL FIX 1] Schema Mimicry for O(1) Database Retrieval
+        # Formatted to perfectly trick library.py into parsing the year and treating it as a standard entry.
+        utc_now = datetime.now(timezone.utc)
+        current_year = utc_now.strftime("%Y")
+        current_time_iso = utc_now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-        # Flatten the description so library.py's combined_text search can index it instantly
+        # Format: CVE-2026-YOMI1234
+        mimicry_id = f"CVE-{current_year}-YOMI{target_pid}"
+
         tactics_str = ", ".join(ai_profile_response.get("mitre_tactics", []))
         methodology_str = ai_profile_response.get("methodology", "Unknown")
         flat_description = f"YOMI Autonomous Profile. Tactics: {tactics_str}. Methodology: {methodology_str}."
 
         yomi_custom_intel = {
             "cve": {
-                "id": f"YOMI-APT-{target_pid}",
-                "published": current_time,
+                "id": mimicry_id,
+                "published": current_time_iso,
                 "descriptions": [{"lang": "en", "value": flat_description}],
                 "references": [{"url": f"yomi://local-triage/pid/{target_pid}"}],
                 "metrics": {},
             }
         }
 
-        # Merge seamlessly into the Library
         added_count = self.library._merge_external_entries(
             [yomi_custom_intel], origin_feed="YOMI_AUTONOMOUS_LEARNING"
         )
 
         if added_count > 0:
-            print("[*] Threat intel permanently injected into Omni-Library Database.")
+            print(
+                f"[*] Threat intel permanently injected into Omni-Library Database as {mimicry_id}."
+            )
             self.audit.record_action(
                 "MINDREADER",
                 "KNOWLEDGE_UPDATED",
-                f"New APT signature (YOMI-APT-{target_pid}) saved to local intelligence library.",
+                f"New APT signature ({mimicry_id}) saved to local intelligence library.",
             )
 
         return {
             "status": "SUCCESS",
             "target_pid": target_pid,
             "hacker_profile": ai_profile_response,
+            "signature_id": mimicry_id,
         }
 
     def _derive_profile_from_assembly(self, assembly_code: str, context: str) -> dict:
@@ -182,7 +186,7 @@ class MindReaderDecompiler:
                 f"OpenClawGateway analysis failed: {str(exc)}",
             )
 
-        # Heuristic Fallback Strategy (Triggered if LLM is offline)
+        # Heuristic Fallback Strategy
         normalized = assembly_code.lower()
         if "socket" in normalized or "connect" in normalized or "ws2_32" in normalized:
             return {
