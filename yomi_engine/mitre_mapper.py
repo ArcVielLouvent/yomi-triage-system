@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -8,9 +9,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_audit.stamp import ImmutableStamp
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - IoE MITRE ATT&CK Mapper
-# Purpose: Translates raw heuristic strings from the Predator Swarm into
-#          standardized MITRE ATT&CK tactical IDs and Indicators of Evil (IoE).
+# YOMI TRIAGE SYSTEM: Engine Module - IoE MITRE ATT&CK Mapper (v3.0)
+# Purpose: Translates raw heuristic strings into standardized MITRE tactical IDs.
+#          - Hardened against Substring False Positives via Regex Escaping.
+#          - De-duplicated MITRE metric reporting for SANS compliance.
+#          - Safe Type-Casting to prevent Triage crashes.
+#          - Standalone CLI Runner enabled for rapid SIFT evaluation.
 # ==============================================================================
 
 
@@ -19,7 +23,7 @@ class MitreMapper:
         self.audit = ImmutableStamp()
 
         # The exact IoE Dictionary from the KuroTech Whitepaper
-        self.ioe_signatures = {
+        self.raw_signatures = {
             "PE_INJECT": {
                 "mitre_id": "T1055",
                 "desc": "Process Injection (VAD manipulation)",
@@ -58,21 +62,38 @@ class MitreMapper:
             },
         }
 
+        self.ioe_signatures = {}
+        for ioe, data in self.raw_signatures.items():
+            # Full boundary wrapper and re.escape to handle spaces/hyphens perfectly
+            pattern_str = (
+                r"\b(?:" + "|".join(re.escape(k) for k in data["keywords"]) + r")\b"
+            )
+            self.ioe_signatures[ioe] = {
+                "mitre_id": data["mitre_id"],
+                "desc": data["desc"],
+                "regex": re.compile(pattern_str, re.IGNORECASE),
+            }
+
     def map_anomalies(self, anomalies: list) -> list:
         """
         Scans raw anomaly text and maps it to official MITRE tactics.
-        Upgraded to support multi-label detection per anomaly.
         """
         mapped_results = []
 
+        if not isinstance(anomalies, list):
+            self.audit.record_action(
+                "MITRE_MAPPER", "ERROR", "Invalid input type. Expected a list."
+            )
+            return mapped_results
+
+        unique_mitre_ids = set() 
+
         for anomaly in anomalies:
-            anomaly_lower = anomaly.lower()
+            anomaly_str = str(anomaly)
             matched_tactics = []
 
             for ioe, data in self.ioe_signatures.items():
-                # If any keyword matches, append it, but DO NOT break.
-                # Malware can exhibit multiple MITRE tactics simultaneously.
-                if any(kw in anomaly_lower for kw in data["keywords"]):
+                if data["regex"].search(anomaly_str):
                     matched_tactics.append(
                         {
                             "ioe_signature": ioe,
@@ -80,17 +101,16 @@ class MitreMapper:
                             "tactical_desc": data["desc"],
                         }
                     )
+                    unique_mitre_ids.add(data["mitre_id"])
 
-            # If found at least one tactic, attach them to the evidence
             if matched_tactics:
                 mapped_results.append(
-                    {"raw_evidence": anomaly, "matched_tactics": matched_tactics}
+                    {"raw_evidence": anomaly_str, "matched_tactics": matched_tactics}
                 )
             else:
-                # Fallback only if absolutely no signatures matched
                 mapped_results.append(
                     {
-                        "raw_evidence": anomaly,
+                        "raw_evidence": anomaly_str,
                         "matched_tactics": [
                             {
                                 "ioe_signature": "GENERIC_ANOMALY",
@@ -100,15 +120,42 @@ class MitreMapper:
                         ],
                     }
                 )
+                unique_mitre_ids.add("T1106")
 
-        total_tactics = sum(len(item["matched_tactics"]) for item in mapped_results)
+        total_unique_tactics = len(unique_mitre_ids)
+
+        # Cleaned UI output, retaining module tag for the central Dashboard
         print(
-            f"\n[YOMI-MAPPER]  Tactical mapping complete. {total_tactics} MITRE signatures identified."
+            f"[YOMI-MAPPER] Tactical mapping complete. {total_unique_tactics} unique MITRE signatures identified."
         )
         self.audit.record_action(
             "MITRE_MAPPER",
             "MAPPED",
-            f"Mapped {total_tactics} tactics across {len(anomalies)} anomalies.",
+            f"Mapped {total_unique_tactics} unique tactics across {len(anomalies)} anomalies.",
         )
 
         return mapped_results
+
+
+# ==============================================================================
+# PRODUCTION RUNNER (CLI EXECUTION)
+# ==============================================================================
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(
+            'Usage: python3 mitre_mapper.py "<anomaly_string_1>" "<anomaly_string_2>" ...'
+        )
+        print(
+            'Example: python3 mitre_mapper.py "Process high-entropy outbound connection detected."'
+        )
+        sys.exit(1)
+
+    anomalies_input = sys.argv[1:]
+    mapper = MitreMapper()
+
+    print("[*] Initializing MitreMapper Engine...")
+    results = mapper.map_anomalies(anomalies_input)
+
+    print("\n[+] Mapping Results:")
+    print(json.dumps(results, indent=2))
+    sys.exit(0)
