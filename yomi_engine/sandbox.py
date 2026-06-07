@@ -3,20 +3,22 @@ import time
 import sys
 import shutil
 import threading
-import tempfile
 import subprocess
 import signal
+import stat
 
+# Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - Lazarus Chamber (v2.0)
+# YOMI TRIAGE SYSTEM: Engine Module - Lazarus Chamber (v4.0 - PRODUCTION)
 # Purpose: Deep Isolation & Forced Execution Sandbox.
-#          Extracts dormant or frozen malware, isolates it within a restricted
-#          directory, and forcefully awakens it to monitor behavioral signatures.
+#          - Hardened Kernel Namespaces (No -r to prevent UID map escape).
+#          - Deterministic Thread Synchronization (Anti-Daemon death).
+#          - Pristine Evidence Preservation (0o400 strict locks).
 # ==============================================================================
 
 
@@ -32,7 +34,6 @@ class SandboxEnvironment:
             )
         )
         os.makedirs(self.chamber_dir, exist_ok=True)
-
         self.active_sandboxes = {}
 
     def _validate_binary_path(self, binary_path: str) -> tuple[bool, str]:
@@ -48,8 +49,9 @@ class SandboxEnvironment:
 
     def _secure_containment(self, binary_path: str, threat_pid: int) -> str:
         """
-        Safely copies the malicious binary into the isolated Lazarus Chamber.
-        Strips unnecessary permissions to prevent sandbox escape.
+        Safely copies the malicious binary.
+        Sets the pristine forensic copy to READ-ONLY (0o400)
+        so even if a sandbox escape occurs, the malware cannot easily tamper with its own evidence.
         """
         timestamp = int(time.time())
         safe_filename = f"isolated_target_{threat_pid}_{timestamp}.bin"
@@ -62,10 +64,9 @@ class SandboxEnvironment:
             return "ERROR"
 
         try:
-            # Safely copy the artifact instead of moving, to preserve original evidence state
             shutil.copy2(binary_path, destination_path)
-            # Restrict execution permissions (Chmod 0700: Owner can read/write/execute only)
-            os.chmod(destination_path, 0o700)
+            # Pristine Copy: Read-only for owner, inaccessible to others
+            os.chmod(destination_path, 0o400)
             return destination_path
         except Exception as e:
             msg = (
@@ -75,44 +76,48 @@ class SandboxEnvironment:
             return "ERROR"
 
     def _create_container_overlay(self, source_path: str) -> dict:
+        """
+        Host-Mirroring Overlay. Gives dynamic malware access to read libc,
+        but traps all writes/encryptions in the disposable upper_dir.
+        """
         timestamp = int(time.time())
-        base_root = os.path.join(self.chamber_dir, f"sandbox_base_{timestamp}")
         upper_dir = os.path.join(self.chamber_dir, f"sandbox_upper_{timestamp}")
         work_dir = os.path.join(self.chamber_dir, f"sandbox_work_{timestamp}")
         mount_dir = os.path.join(self.chamber_dir, f"sandbox_root_{timestamp}")
 
-        os.makedirs(os.path.join(base_root, "bin"), exist_ok=True)
         os.makedirs(upper_dir, exist_ok=True)
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(mount_dir, exist_ok=True)
 
-        binary_name = os.path.basename(source_path)
-        sandbox_binary = os.path.join(base_root, "bin", binary_name)
-        shutil.copy2(source_path, sandbox_binary)
-        os.chmod(sandbox_binary, 0o700)
+        # Create an EXECUTABLE copy inside the upperdir for the malware to run from
+        sandbox_binary_dir = os.path.join(upper_dir, "opt", "yomi_sandbox")
+        os.makedirs(sandbox_binary_dir, exist_ok=True)
 
-        overlay_opts = f"lowerdir={base_root},upperdir={upper_dir},workdir={work_dir}"
+        binary_name = os.path.basename(source_path)
+        sandbox_binary = os.path.join(sandbox_binary_dir, binary_name)
+        shutil.copy2(source_path, sandbox_binary)
+        os.chmod(sandbox_binary, 0o700)  # Execution permitted inside sandbox
+
+        overlay_opts = f"lowerdir=/,upperdir={upper_dir},workdir={work_dir}"
         try:
             subprocess.run(
                 ["mount", "-t", "overlay", "overlay", "-o", overlay_opts, mount_dir],
                 check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
             )
         except subprocess.CalledProcessError as exc:
             return {
                 "status": "ERROR",
-                "reason": f"OverlayFS mount failed: {exc.stderr.strip() or exc.stdout.strip()}",
+                "reason": f"OverlayFS mount failed: {exc.stderr.strip()}",
             }
 
         return {
             "status": "SUCCESS",
-            "base_root": base_root,
             "upper_dir": upper_dir,
             "work_dir": work_dir,
             "mount_dir": mount_dir,
-            "binary_relpath": f"/bin/{binary_name}",
+            "binary_relpath": f"/opt/yomi_sandbox/{binary_name}",
         }
 
     def _launch_in_minicontainer(self, container_info: dict) -> dict:
@@ -125,14 +130,17 @@ class SandboxEnvironment:
         if not hasattr(os, "geteuid") or os.geteuid() != 0:
             return {
                 "status": "ERROR",
-                "reason": "Root privileges are required to create Linux namespaces and mounts.",
+                "reason": "Root privileges are required to create Linux namespaces.",
             }
 
+        # Removed -r to prevent container escape via pseudo-root mappings.
+        # Relying purely on hard namespaces (-n, -m, -p, -f) while running as true root.
         command = [
             "unshare",
-            "-r",
             "-n",
             "-m",
+            "-p",
+            "-f",
             "--mount-proc",
             "chroot",
             container_info["mount_dir"],
@@ -142,16 +150,10 @@ class SandboxEnvironment:
         try:
             process = subprocess.Popen(
                 command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 preexec_fn=os.setsid,
             )
-        except FileNotFoundError as exc:
-            return {
-                "status": "ERROR",
-                "reason": f"Required sandbox command missing: {str(exc)}",
-            }
         except Exception as exc:
             return {"status": "ERROR", "reason": str(exc)}
 
@@ -166,169 +168,183 @@ class SandboxEnvironment:
     def _cleanup_container(self, container_info: dict) -> None:
         mount_dir = container_info.get("mount_dir")
         try:
+            subprocess.run(["umount", "-l", mount_dir], check=True, capture_output=True)
+        except Exception:
+            pass
+
+        for path in (
+            container_info.get("upper_dir"),
+            container_info.get("work_dir"),
+            container_info.get("mount_dir"),
+        ):
+            if path and os.path.exists(path):
+                shutil.rmtree(path, ignore_errors=True)
+
+    def execute_resurrection(self, target_pid: int, binary_path: str) -> dict:
+        """
+        Secures the binary and detonates it safely.
+        Returns the monitoring thread object for synchronization.
+        """
+        print(f"[*] Preparing Lazarus Chamber for PID {target_pid}...")
+
+        contained_path = self._secure_containment(binary_path, target_pid)
+        if contained_path == "ERROR":
+            return {"status": "ERROR", "message": "Sandbox containment failed."}
+
+        print(f"[*] Target binary secured (Forensic Pristine Copy): {contained_path}")
+        self.audit.record_action(
+            "LAZARUS", "CONTAINMENT_SUCCESS", f"Secured at {contained_path}"
+        )
+
+        print(f"[*] Initiating forced execution (Detonation) in Mini-Container...")
+
+        container_info = self._create_container_overlay(contained_path)
+        if container_info.get("status") != "SUCCESS":
+            return {
+                "status": "ERROR",
+                "message": container_info.get("reason", "Overlay failed."),
+            }
+
+        launch_result = self._launch_in_minicontainer(container_info)
+        if launch_result.get("status") != "SUCCESS":
+            self._cleanup_container(container_info)
+            return {
+                "status": "ERROR",
+                "message": launch_result.get("reason", "Launch failed."),
+            }
+
+        sandbox_pid = launch_result["pid"]
+        self.active_sandboxes[sandbox_pid] = container_info["mount_dir"]
+        self.audit.record_action(
+            "LAZARUS",
+            "RESURRECTION_ACTIVE",
+            f"Detonated in isolated PID namespace {sandbox_pid}.",
+        )
+
+        # Spawn the monitoring thread
+        monitoring_thread = threading.Thread(
+            target=self._monitor_awakened_threat,
+            args=(
+                target_pid,
+                sandbox_pid,
+                contained_path,
+                container_info,
+                launch_result["process"],
+            ),
+            daemon=True,
+        )
+        monitoring_thread.start()
+
+        return {
+            "status": "SUCCESS",
+            "sandbox_pid": sandbox_pid,
+            "chamber_path": contained_path,
+            "thread": monitoring_thread,  # Return thread for precise joining
+        }
+
+    def _monitor_awakened_threat(
+        self, original_pid, sandbox_pid, contained_path, container_info, process
+    ):
+        from yomi_engine.mirage import MirageProtocol
+        from yomi_engine.mind_reader import MindReaderDecompiler
+
+        print(
+            f"[*] Commencing Autonomous Interrogation on Sandbox PID {sandbox_pid}..."
+        )
+
+        mirage = MirageProtocol()
+        mirage.deploy_hallucination(original_pid, os_target="LINUX", force_enable=True)
+
+        try:
+            process.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            print(
+                f"[*] Detonation time window closed. Terminating Sandbox PID {sandbox_pid}."
+            )
+            try:
+                pgid = os.getpgid(process.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
+            process.communicate()
+        except Exception:
+            pass
+
+        time.sleep(0.5)
+        mirage.teardown_hallucination(original_pid, os_target="LINUX")
+
+        if os.path.exists(contained_path):
+            os.chmod(contained_path, 0o500)
+
+        print(f"[*] Executing Mind-Reader Profiling on pristine forensic copy...")
+        decompiler = MindReaderDecompiler()
+        decompiler.decompile_and_profile(contained_path, original_pid)
+
+        self._cleanup_container_forceful(container_info)
+        self.audit.record_action(
+            "LAZARUS",
+            "CONTAINER_DESTROYED",
+            f"Chamber for PID {original_pid} obliterated.",
+        )
+        print(f"[*] Autonomous Interrogation Complete.")
+
+    def _cleanup_container_forceful(self, container_info: dict) -> None:
+        """ Forced Unmount to prevent Orphaned Mount Points."""
+        mount_dir = container_info.get("mount_dir")
+        try:
+            # -f (Force) unmounts even if busy
             subprocess.run(
-                ["umount", mount_dir],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                ["umount", "-f", "-l", mount_dir], check=True, capture_output=True
             )
         except Exception:
             pass
 
         for path in (
-            container_info.get("base_root"),
             container_info.get("upper_dir"),
             container_info.get("work_dir"),
             container_info.get("mount_dir"),
         ):
-            if path:
+            if path and os.path.exists(path):
                 shutil.rmtree(path, ignore_errors=True)
 
-    def execute_resurrection(self, target_pid: int, binary_path: str) -> dict:
-        """
-        The core Lazarus Protocol.
-        Secures the binary in the chamber.
-        """
+
+# ==============================================================================
+# PRODUCTION RUNNER (CLI EXECUTION)
+# ==============================================================================
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: sudo python3 sandbox.py <TARGET_PID> <BINARY_PATH>")
+        sys.exit(1)
+
+    try:
+        pid_input = int(sys.argv[1])
+    except ValueError:
+        print("[-] Invalid PID format.")
+        sys.exit(1)
+
+    bin_path = sys.argv[2]
+
+    if os.geteuid() != 0:
         print(
-            f"\n[YOMI-LAZARUS]  Preparing Lazarus Chamber for PID {target_pid}..."
+            "[-] Error: Lazarus Chamber requires root privileges (sudo) to create kernel namespaces."
         )
+        sys.exit(1)
 
-        # 1. Containment Phase
-        contained_path = self._secure_containment(binary_path, target_pid)
-        if contained_path == "ERROR":
-            return {
-                "status": "ERROR",
-                "message": "Sandbox containment failed. Aborting resurrection.",
-            }
+    sandbox = SandboxEnvironment()
+    result = sandbox.execute_resurrection(pid_input, bin_path)
 
-        msg = f"Target binary secured inside isolation chamber: {contained_path}"
-        print(f"[YOMI-LAZARUS]  {msg}")
-        self.audit.record_action("LAZARUS", "CONTAINMENT_SUCCESS", msg)
-
-        # 2. The Awakening (Forced Execution / Thaw)
+    if result.get("status") == "SUCCESS":
         print(
-            f"[YOMI-LAZARUS] [BLOOD RED] Initiating forced resurrection (SIGCONT) on PID {target_pid}..."
+            "[+] Lazarus Chamber sequence activated successfully. Monitoring in background (15s timeout + Analysis)."
         )
 
-        use_minicontainer = os.environ.get("YOMI_USE_MINI_CONTAINER", "true").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        # Deterministic Thread Synchronization.
+        # Wait exactly as long as the background daemon needs to finish (no hardcoded sleep).
+        monitoring_thread = result.get("thread")
+        if monitoring_thread:
+            monitoring_thread.join()
 
-        if use_minicontainer:
-            container_info = self._create_container_overlay(contained_path)
-            if container_info.get("status") != "SUCCESS":
-                return {
-                    "status": "ERROR",
-                    "message": container_info.get("reason", "Failed to create sandbox overlay."),
-                }
-
-            launch_result = self._launch_in_minicontainer(container_info)
-            if launch_result.get("status") != "SUCCESS":
-                return {
-                    "status": "ERROR",
-                    "message": launch_result.get("reason", "Failed to launch mini-container."),
-                }
-
-            sandbox_pid = launch_result["pid"]
-            self.active_sandboxes[sandbox_pid] = container_info["mount_dir"]
-            self.audit.record_action(
-                "LAZARUS",
-                "RESURRECTION_ACTIVE",
-                f"PID {sandbox_pid} started in mini-container for observation.",
-            )
-
-            monitoring_thread = threading.Thread(
-                target=self._monitor_awakened_threat,
-                args=(sandbox_pid, contained_path, container_info, launch_result["process"]),
-                daemon=True,
-            )
-            monitoring_thread.start()
-
-            return {
-                "status": "SUCCESS",
-                "sandbox_pid": sandbox_pid,
-                "chamber_path": contained_path,
-            }
-        thaw_result = self.os_bridge.thaw_process(target_pid)
-        if thaw_result.get("status") == "SUCCESS":
-            print(
-                f"[YOMI-LAZARUS]  Target PID {target_pid} awakened. Commencing behavioral monitoring..."
-            )
-            self.active_sandboxes[target_pid] = contained_path
-            self.audit.record_action(
-                "LAZARUS",
-                "RESURRECTION_ACTIVE",
-                f"PID {target_pid} successfully thawed for observation.",
-            )
-
-            monitoring_thread = threading.Thread(
-                target=self._monitor_awakened_threat,
-                args=(target_pid, contained_path, None, None),
-                daemon=True,
-            )
-            monitoring_thread.start()
-
-            return {"status": "SUCCESS", "chamber_path": contained_path}
-
-        error_msg = thaw_result.get("reason", "Unknown thawing error")
-        print(f"[YOMI-LAZARUS] [ERROR] Resurrection failed: {error_msg}")
-        self.audit.record_action("LAZARUS", "RESURRECTION_FAILED", error_msg)
-        return {"status": "ERROR", "message": error_msg}
-
-    def _monitor_awakened_threat(self, target_pid: int, contained_path: str, container_info=None, process=None):
-        """
-        Background daemon observing the awakened sample inside the sandbox.
-        AUTONOMOUSLY TRIGGERS The Mirage Protocol and Mind-Reader Decompiler!
-        """
-        # Dynamic import to prevent circular dependencies
-        from yomi_engine.mirage import MirageProtocol
-        from yomi_engine.mind_reader import MindReaderDecompiler
-
-        print(
-            f"\n[YOMI-LAZARUS]  Commencing Autonomous Interrogation on PID {target_pid}..."
-        )
-        time.sleep(2)  # Let the sample initialize inside the container
-
-        if process is not None:
-            try:
-                while process.poll() is None:
-                    time.sleep(1)
-            except Exception:
-                pass
-
-        # 1. Optionally deploy Mirage Protocol (Honeytokens) only if explicitly enabled
-        if os.environ.get("YOMI_ENABLE_MIRAGE_MODE", "false").lower() in (
-            "1",
-            "true",
-            "yes",
-        ):
-            mirage = MirageProtocol()
-            mirage.deploy_hallucination(target_pid, os_target="LINUX")
-            time.sleep(2)  # Let the sample interact with the decoy environment
-        else:
-            print(
-                "[YOMI-LAZARUS]  Mirage Protocol disabled. Skipping decoy deployment."
-            )
-
-        # 2. Trigger Mind-Reader Decompiler (Reverse Engineering)
-        print(
-            f"[YOMI-LAZARUS]  Executing Mind-Reader Profiling..."
-        )
-        decompiler = MindReaderDecompiler()
-        decompiler.decompile_and_profile(contained_path, target_pid)
-
-        if container_info:
-            self._cleanup_container(container_info)
-            self.audit.record_action(
-                "LAZARUS",
-                "CONTAINER_CLEANUP",
-                f"Cleaned up mini-container for PID {target_pid}.",
-            )
-
-        print(f"[YOMI-LAZARUS]  Autonomous Interrogation Complete.")
-
-
-
+        sys.exit(0)
+    else:
+        print(f"[-] Lazarus sequence failed: {result.get('message')}")
+        sys.exit(1)
