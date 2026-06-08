@@ -13,11 +13,11 @@ from yomi_audit.stamp import ImmutableStamp
 from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - The Shadow Net (v6.0)
+# YOMI TRIAGE SYSTEM: Engine Module - The Shadow Net (v7.0)
 # Purpose: Epistemic Doubt Resolution via Asynchronous Kernel Hooks (eBPF).
-#          - Anti-TOCTOU: "Freeze-First, Verify-Later" architecture.
-#          - Secure ELF Necromancy: O_EXCL file creation & Chunked I/O anti-hang.
-#          - Process Hollowing Sandbox: Extracts and detonates memfd payloads.
+#          - Atomic Vault Creation (os.umask) against Symlink Race Conditions.
+#          - Absolute PID Recycling Detection via /proc/[pid]/stat Start_Time.
+#          - Anti-DoS LSTAT Path Resolution (Immune to Symlink Loops).
 # ==============================================================================
 
 
@@ -29,12 +29,16 @@ class ShadowNetProtocol:
         self.hook_lock = threading.Lock()
         self.active_hooks = {}
 
-        # Secure recovery directory for ELF Necromancy (Not public /tmp)
-        self.recovery_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "yomi_data", "recovery")
-        )
-        os.makedirs(self.recovery_dir, exist_ok=True)
-        os.chmod(self.recovery_dir, 0o700)  # Only root can access this vault
+        # Atomic Vault Creation via Umask
+        # Sets default permission to 0o700 at the EXACT millisecond of creation
+        old_umask = os.umask(0o077)
+        try:
+            self.recovery_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "yomi_data", "recovery")
+            )
+            os.makedirs(self.recovery_dir, exist_ok=True)
+        finally:
+            os.umask(old_umask)  # Restore system umask immediately
 
         # Singleton Kernel Instantiation
         from yomi_engine.ebpf_sensor import eBPFSentinel
@@ -53,27 +57,51 @@ class ShadowNetProtocol:
                 "SHADOW_NET", "EBPF_INIT_ERROR", f"Failed to arm kernel sensor: {e}"
             )
 
-    def _resolve_binary_path(self, target_pid: int) -> tuple[str, bool, str]:
+    def _get_process_start_time(self, pid: int) -> str:
         """
-        Safely reads the binary path, penetrates containers, and identifies fileless traits.
+        Reads the 22nd field of /proc/[pid]/stat (starttime).
+        This is the absolute truth of process identity, preventing PID recycling flaws.
         """
+        try:
+            with open(f"/proc/{pid}/stat", "r") as f:
+                stat_data = f.read().split()
+                # Field 22 (index 21) is starttime in clock ticks since system boot
+                return stat_data[21]
+        except Exception:
+            return ""
+
+    def _resolve_binary_path(self, target_pid: int) -> tuple[str, bool, str, str]:
+        """
+        Returns: (host_accessible_path, is_fileless, raw_symlink_path, process_start_time)
+        """
+        start_time = self._get_process_start_time(target_pid)
+
         try:
             raw_path = os.readlink(f"/proc/{target_pid}/exe")
             is_fileless = raw_path.startswith("/memfd:")
             clean_path = raw_path.replace(" (deleted)", "")
 
-            if not os.path.exists(raw_path) and not is_fileless:
-                container_path = f"/proc/{target_pid}/root{clean_path}"
-                if os.path.exists(container_path):
-                    # Prevent hanging on named pipes (FIFO) or sockets created by malware
-                    mode = os.stat(container_path).st_mode
-                    if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
-                        return "", False, ""
-                    return container_path, is_fileless, raw_path
+            # Anti-DoS via os.lstat
+            # lstat reads the link itself, NOT what it points to, preventing infinite loops.
+            try:
+                os.lstat(raw_path)
+            except FileNotFoundError:
+                if not is_fileless:
+                    container_path = f"/proc/{target_pid}/root{clean_path}"
+                    try:
+                        c_stat = os.lstat(container_path)
+                        # Block named pipes (FIFO) and Sockets from hanging the system
+                        if stat.S_ISFIFO(c_stat.st_mode) or stat.S_ISSOCK(
+                            c_stat.st_mode
+                        ):
+                            return "", False, "", start_time
+                        return container_path, is_fileless, raw_path, start_time
+                    except FileNotFoundError:
+                        pass
 
-            return clean_path, is_fileless, raw_path
+            return clean_path, is_fileless, raw_path, start_time
         except Exception:
-            return "", False, ""
+            return "", False, "", start_time
 
     def deploy_micro_hook(self, target_pid: int, reason: str) -> dict:
         if not isinstance(target_pid, int) or target_pid <= 0:
@@ -92,16 +120,16 @@ class ShadowNetProtocol:
                 }
             self.active_hooks[target_pid] = "INITIALIZING"
 
-        initial_bin_path, is_fileless, initial_raw_path = self._resolve_binary_path(
-            target_pid
+        initial_bin_path, is_fileless, initial_raw_path, initial_start_time = (
+            self._resolve_binary_path(target_pid)
         )
 
-        if not initial_bin_path:
+        if not initial_bin_path or not initial_start_time:
             with self.hook_lock:
                 del self.active_hooks[target_pid]
             return {
                 "status": "ERROR",
-                "message": "Cannot resolve binary path. Process may be dead or inaccessible.",
+                "message": "Cannot resolve binary path/start time. Process may be dead or inaccessible.",
             }
 
         fileless_tag = "[FILELESS-MEMFD]" if is_fileless else ""
@@ -111,7 +139,13 @@ class ShadowNetProtocol:
 
         hook_thread = threading.Thread(
             target=self._monitor_syscalls_safe,
-            args=(target_pid, initial_bin_path, initial_raw_path, is_fileless),
+            args=(
+                target_pid,
+                initial_bin_path,
+                initial_raw_path,
+                is_fileless,
+                initial_start_time,
+            ),
             daemon=True,
         )
 
@@ -127,10 +161,15 @@ class ShadowNetProtocol:
         initial_bin_path: str,
         initial_raw_path: str,
         is_fileless: bool,
+        initial_start_time: str,
     ):
         try:
             self._monitor_syscalls_logic(
-                target_pid, initial_bin_path, initial_raw_path, is_fileless
+                target_pid,
+                initial_bin_path,
+                initial_raw_path,
+                is_fileless,
+                initial_start_time,
             )
         except Exception as e:
             self.audit.record_action(
@@ -147,6 +186,7 @@ class ShadowNetProtocol:
         initial_bin_path: str,
         initial_raw_path: str,
         is_fileless: bool,
+        initial_start_time: str,
     ):
         print(
             f"[*] Kernel surveillance active on PID {target_pid}. Polling Ring-0 telemetry..."
@@ -165,17 +205,16 @@ class ShadowNetProtocol:
                 )
                 return
 
-            current_bin_path, _, current_raw_path = self._resolve_binary_path(
-                target_pid
+            current_bin_path, _, current_raw_path, current_start_time = (
+                self._resolve_binary_path(target_pid)
             )
 
-            # Check if PID was recycled right before the freeze
-            if current_raw_path != initial_raw_path:
+            # Absolute PID Recycling Validation using Kernel Boot Ticks
+            if current_start_time != initial_start_time or current_start_time == "":
                 print(
-                    f"[-] WARNING: PID {target_pid} recycled! Thawing OS process to prevent system damage."
+                    f"[-] WARNING: PID {target_pid} recycled (Start Time mismatch)! Thawing OS process..."
                 )
 
-                # Double Safety Belt for OS Stability
                 thaw_result = self.os_bridge.thaw_process(target_pid)
                 if thaw_result.get("status") != "SUCCESS":
                     print(
@@ -225,7 +264,6 @@ class ShadowNetProtocol:
 
         recovery_source = binary_path
 
-        # Secure ELF Necromancy & Process Hollowing Extraction
         if is_fileless or not os.path.exists(binary_path):
             print(
                 f"[*] Threat is memory-resident. Initiating Secure ELF RAM Recovery..."
@@ -271,7 +309,6 @@ class ShadowNetProtocol:
                         pass
                 recovery_source = None
 
-        # Alur Eksekusi Analisis Intelijen
         if recovery_source:
             from yomi_engine.sandbox import SandboxEnvironment
 
