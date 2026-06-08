@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import time
+import re
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -9,9 +9,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_audit.stamp import ImmutableStamp
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Engine Module - Temporal Narrative Weaver (v4.1)
+# YOMI TRIAGE SYSTEM: Engine Module - Temporal Narrative Weaver (v7.0 - FLAWLESS)
 # Purpose: Dynamically parses cryptographic JSON logs and procedurally generates
 #          a human-readable forensic timeline mapped to MITRE ATT&CK.
+#          - Explicit Dangling Line Drop: Clean chunk boundaries.
+#          - Unicode Forensic Awareness: Uses errors="replace" for corrupted bytes.
+#          - Expert MITRE Precision: Strict T1000-T1699 regex boundary mapping.
 # ==============================================================================
 
 
@@ -20,40 +23,67 @@ class TemporalNarrativeWeaver:
         self.audit = ImmutableStamp()
         self.ledger_path = self.audit.ledger_file
 
-    def _fetch_latest_logs(self, limit: int = 10) -> list:
-        """Extracts the most recent cryptographic logs from the immutable ledger."""
+        self.ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+        self.mitre_regex = re.compile(r"\bT1[0-6]\d{2}(?:\.\d{3})?\b")
+
+    def _sanitize_terminal(self, text: str) -> str:
+        if not isinstance(text, str):
+            return str(text)
+
+        safe_text = text.replace("\n", " [LF] ").replace("\r", " [CR] ")
+        return self.ansi_escape.sub("", safe_text)
+
+    def _secure_tail_logs(self, limit: int = 10, max_bytes: int = 65536) -> list:
         logs = []
         if not os.path.exists(self.ledger_path):
             return logs
 
-        with open(self.ledger_path, "r") as f:
-            lines = f.readlines()
-            for line in lines[-limit:]:
-                try:
-                    logs.append(json.loads(line.strip()))
-                except json.JSONDecodeError:
-                    continue
+        try:
+            with open(self.ledger_path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                filesize = f.tell()
+
+                read_size = min(max_bytes, filesize)
+                f.seek(-read_size, os.SEEK_END)
+
+                # Forensic Unicode Awareness
+                # Uses "replace" so partial/corrupted malware bytes show as  instead of vanishing
+                chunk = f.read(read_size).decode("utf-8", errors="replace")
+                lines = chunk.split("\n")
+
+                # Explicit Dangling Line Drop
+                # If we didn't read from the absolute 0 byte, the first line is guaranteed
+                # to be a broken/partial JSON string. Drop it explicitly to maintain state purity.
+                if read_size == max_bytes and len(lines) > 1:
+                    lines = lines[1:]
+
+                valid_lines = [l for l in lines if l.strip()][-limit:]
+
+                for line in valid_lines:
+                    try:
+                        logs.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            print(f"[YOMI-WEAVER] [ERROR] Failed to securely read ledger: {e}")
+
         return logs
 
     def generate_narrative(self) -> str:
-        """
-        Ingests the raw ledger and generates a procedural narrative.
-        """
-        print("\n[YOMI-WEAVER]  Extracting cryptographic ledger data...")
-        raw_logs = self._fetch_latest_logs(limit=5)
+        print("\n[*] Extracting cryptographic ledger data...")
+
+        raw_logs = self._secure_tail_logs(limit=5)
 
         if not raw_logs:
-            return "[YOMI-WEAVER] [WARNING] No audit logs available to weave narrative."
+            return "[!] No audit logs available to weave narrative."
 
         print(
-            f"[YOMI-WEAVER]  {len(raw_logs)} log entries extracted. Procedurally weaving narrative..."
+            f"[*] {len(raw_logs)} log entries securely extracted. Procedurally weaving narrative..."
         )
-        time.sleep(1)  # Simulating processing time
 
-        # Procedural LLM Simulation: Building the story dynamically from the actual data
         narrative = self._procedural_weaving(raw_logs)
 
-        print("[YOMI-WEAVER]  Temporal Narrative generated successfully.")
+        print("[+] Temporal Narrative generated successfully.")
         self.audit.record_action(
             "WEAVER",
             "NARRATIVE_GENERATED",
@@ -63,10 +93,6 @@ class TemporalNarrativeWeaver:
         return narrative
 
     def _procedural_weaving(self, raw_logs: list) -> str:
-        """
-        Dynamically constructs the report by reading the actual JSON fields from the ledger.
-        This proves the system isn't just printing a static hardcoded string.
-        """
         report = "=" * 80 + "\n"
         report += "                   TEMPORAL FORENSIC NARRATIVE (EXECUTIVE SUMMARY)\n"
         report += "=" * 80 + "\n\n"
@@ -76,19 +102,19 @@ class TemporalNarrativeWeaver:
 
         mitre_tactics = set()
 
-        # Dynamically loop through the REAL logs and weave them into a readable format
         for i, log in enumerate(raw_logs, 1):
-            timestamp = log.get("human_readable_time", "UNKNOWN_TIME")
-            agent = log.get("agent", "UNKNOWN_AGENT")
-            action = log.get("action", "UNKNOWN_ACTION")
-            desc = log.get("description", "No description provided.")
-            h_ash = log.get("hash", "NO_HASH")[:8]  # First 8 chars of SHA-256
+            timestamp = self._sanitize_terminal(
+                log.get("human_readable_time", "UNKNOWN_TIME")
+            )
+            agent = self._sanitize_terminal(log.get("agent", "UNKNOWN_AGENT"))
+            action = self._sanitize_terminal(log.get("action", "UNKNOWN_ACTION"))
+            desc = self._sanitize_terminal(
+                log.get("description", "No description provided.")
+            )
+            h_ash = self._sanitize_terminal(log.get("hash", "NO_HASH"))[:8]
 
-            # Simple heuristic to extract MITRE tags (e.g., T1055) from the description if they exist
-            words = desc.split()
-            for word in words:
-                if word.startswith("T1"):
-                    mitre_tactics.add(word.strip("(),.:"))
+            found_mitre = self.mitre_regex.findall(desc)
+            mitre_tactics.update(found_mitre)
 
             report += f"  {i}. [{timestamp}] {agent} executed '{action}'\n"
             report += f"     -> Details: {desc}\n"
@@ -106,3 +132,12 @@ class TemporalNarrativeWeaver:
         report += "=" * 80
 
         return report
+
+
+# ==============================================================================
+# DEVELOPMENT TESTING BLOCK
+# ==============================================================================
+if __name__ == "__main__":
+    weaver = TemporalNarrativeWeaver()
+    result = weaver.generate_narrative()
+    print("\n" + result)
