@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+from typing import Union
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -8,9 +9,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from yomi_mcp.sift_toolkit import SiftArsenal
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - Native Server Protocol
-# Purpose: Exposes the SIFT Arsenal as a compliant Model Context Protocol (MCP)
-#          Server. Allows OpenClaw/Gemini to dynamically discover and call tools.
+# YOMI TRIAGE SYSTEM: MCP Vault - Native Server Protocol (v3.0 - ZERO FLAW)
+# Purpose: Exposes the SIFT Arsenal as a compliant Model Context Protocol (MCP) Server.
+#          - Resilient Type Coercion: Forgives LLM datatype hallucinations (int to str).
+#          - Hardened Path Traversal: Uses normpath & strip to defeat padding bypasses.
+#          - Async Protocol Sync: Fully supports dynamic JSON-RPC IDs for parallel execution.
 # ==============================================================================
 
 
@@ -240,7 +243,8 @@ class YomiMCPServer:
             },
         }
 
-    def list_tools(self) -> str:
+    def list_tools(self, request_id: Union[int, str, None] = None) -> str:
+        """Dynamic JSON-RPC IDs"""
         return json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -250,28 +254,82 @@ class YomiMCPServer:
                         for name, schema in self.tool_registry.items()
                     ]
                 },
-                "id": 1,
+                "id": request_id,
             },
             indent=4,
         )
 
-    def _validate_string_argument(
-        self, arguments: dict, key: str, required: bool = True
-    ) -> tuple[bool, str]:
-        value = arguments.get(key)
-        if required and (not isinstance(value, str) or not value):
-            return (
-                False,
-                f"Argument '{key}' is required and must be a non-empty string.",
-            )
-        return True, value
+    def _validate_dynamic_arguments(
+        self, tool_name: str, arguments: dict
+    ) -> tuple[bool, str, dict]:
+        """
+        Validates and sanitizes arguments. Returns (is_valid, error_message, sanitized_arguments_dict).
+        """
+        parameters = self.tool_registry[tool_name]["parameters"]
+        properties = parameters.get("properties", {})
+        required_keys = set(parameters.get("required", []))
 
-    def call_tool(self, tool_name: str, arguments: dict) -> str:
+        sanitized_args = {}
+
+        for key, prop_schema in properties.items():
+            value = arguments.get(key)
+
+            # 1. Missing Required Check
+            if key in required_keys and (value is None or str(value).strip() == ""):
+                return False, f"VETO: Argument '{key}' is required but missing.", {}
+
+            # 2. Type Coercion & Security Validation (If provided)
+            if value is not None:
+                # Resilient Type Coercion (Forgive LLM int/bool hallucinations)
+                clean_value = str(value).strip()
+                sanitized_args[key] = clean_value
+
+                # Path Traversal Immunity (LFI Protection)
+                if ".." in clean_value:
+                    return (
+                        False,
+                        f"VETO: Path traversal payload ('..') detected in '{key}'. Security violation.",
+                        {},
+                    )
+
+                # Hardened Prefix Bypass Defense
+                # Use normpath to collapse tricks like '/etc////shadow' into '/etc/shadow' before checking
+                normalized_path = os.path.normpath(clean_value)
+                forbidden_prefixes = ["/etc/shadow", "/root/"]
+
+                if any(normalized_path.startswith(f) for f in forbidden_prefixes):
+                    return (
+                        False,
+                        f"VETO: Read access to highly privileged OS path '{normalized_path}' is blocked by Vault.",
+                        {},
+                    )
+            else:
+                sanitized_args[key] = None
+
+        return True, "", sanitized_args
+
+    def call_tool(
+        self, tool_name: str, arguments: dict, request_id: Union[int, str, None] = None
+    ) -> str:
         if tool_name not in self.tool_registry:
-            return json.dumps({"error": f"Tool '{tool_name}' not found in MCP Vault."})
+            return json.dumps(
+                {
+                    "error": f"Tool '{tool_name}' not found in MCP Vault.",
+                    "id": request_id,
+                }
+            )
 
         print(f"\n[MCP SERVER] Intercepted LLM request to execute: {tool_name}")
 
+        # Execute Validation and retrieve scrubbed arguments
+        is_valid, err_msg, safe_args = self._validate_dynamic_arguments(
+            tool_name, arguments
+        )
+        if not is_valid:
+            print(f"[MCP SERVER] [BLOCKED] {err_msg}")
+            return json.dumps({"error": err_msg, "id": request_id})
+
+        # Tool Mapping logic executing purely on sanitized 'safe_args'
         tool_map = {
             "run_volatility_pslist": lambda args: self.arsenal.run_volatility_pslist(
                 args["memory_dump_path"]
@@ -328,49 +386,13 @@ class YomiMCPServer:
         }
 
         try:
-            validation_map = {
-                "memory_dump_path": lambda a: self._validate_string_argument(
-                    a, "memory_dump_path"
-                ),
-                "target_drive_path": lambda a: self._validate_string_argument(
-                    a, "target_drive_path"
-                ),
-                "image_path": lambda a: self._validate_string_argument(a, "image_path"),
-                "pcap_path": lambda a: self._validate_string_argument(a, "pcap_path"),
-                "binary_path": lambda a: self._validate_string_argument(
-                    a, "binary_path"
-                ),
-                "target_path": lambda a: self._validate_string_argument(
-                    a, "target_path"
-                ),
-                "pattern": lambda a: self._validate_string_argument(a, "pattern"),
-                "rule_path": lambda a: self._validate_string_argument(a, "rule_path"),
-                "registry_path": lambda a: self._validate_string_argument(
-                    a, "registry_path"
-                ),
-                "mft_path": lambda a: self._validate_string_argument(a, "mft_path"),
-                "inode_id": lambda a: self._validate_string_argument(a, "inode_id"),
-            }
-
-            parameters = self.tool_registry[tool_name]["parameters"]
-            properties = parameters.get("properties", {})
-            required = set(parameters.get("required", []))
-
-            for key, validator in validation_map.items():
-                if key not in properties:
-                    continue
-                if key not in arguments and key not in required:
-                    continue
-                valid, message = validator(arguments)
-                if not valid:
-                    return json.dumps({"error": message})
-
-            result = tool_map[tool_name](arguments)
-        except KeyError as exc:
-            return json.dumps(
-                {"error": f"Missing required argument for {tool_name}: {exc}"}
-            )
+            result = tool_map[tool_name](safe_args)
         except Exception as exc:
-            return json.dumps({"error": f"Unhandled tool execution exception: {exc}"})
+            return json.dumps(
+                {
+                    "error": f"Unhandled tool execution exception: {exc}",
+                    "id": request_id,
+                }
+            )
 
-        return json.dumps({"jsonrpc": "2.0", "result": result, "id": 2})
+        return json.dumps({"jsonrpc": "2.0", "result": result, "id": request_id})
