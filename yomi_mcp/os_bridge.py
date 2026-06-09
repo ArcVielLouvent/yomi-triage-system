@@ -3,12 +3,13 @@ import os
 import platform
 import signal
 import shutil
-import psutil
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v3.0)
-# Purpose: Hardware Abstraction Layer. Detects OS and available forensic
-#          binaries, then routes execution safely with real toolchain awareness.
+# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v6.0)
+# Purpose: Hardware Abstraction Layer. Detects OS and routes execution safely.
+#          - Symlink Hijack Defeated: Resolves true disk paths via realpath.
+#          - Bitness Immunity: Minimal privilege OpenProcess for Wow64 stability.
+#          - Atomic Execution (Zero TOCTOU): Eradicated psutil pre-checks.
 # ==============================================================================
 
 
@@ -77,13 +78,42 @@ class OSBridge:
             "scalpel": ["scalpel"],
         }
 
-        for tool_name, executable_names in known_tools.items():
-            self.tool_paths[tool_name] = next(
-                (shutil.which(exe) for exe in executable_names if shutil.which(exe)),
-                "",
-            )
+        trusted_linux_paths = [
+            "/bin/",
+            "/sbin/",
+            "/usr/bin/",
+            "/usr/sbin/",
+            "/usr/local/bin/",
+            "/opt/",
+        ]
 
-        self.is_sift = bool(self.tool_paths.get("volatility") and self.tool_paths.get("fls"))
+        for tool_name, executable_names in known_tools.items():
+            resolved_path = ""
+            for exe in executable_names:
+                path = shutil.which(exe)
+                if path:
+                    # Defeat Symlink Hijacking
+                    true_path = (
+                        os.path.realpath(path) if self.os_type == "Linux" else path
+                    )
+
+                    if self.os_type == "Linux":
+                        is_trusted = any(
+                            true_path.startswith(tp) for tp in trusted_linux_paths
+                        )
+                        if not is_trusted:
+                            print(
+                                f"[YOMI-BRIDGE] [WARNING] Path Hijack Attempt? Ignored untrusted binary location: {true_path}"
+                            )
+                            continue
+
+                    resolved_path = true_path
+                    break
+            self.tool_paths[tool_name] = resolved_path
+
+        self.is_sift = bool(
+            self.tool_paths.get("volatility") and self.tool_paths.get("fls")
+        )
 
     def _display_detected_tools(self) -> None:
         print("[YOMI-BRIDGE] Forensic tool availability:")
@@ -110,16 +140,19 @@ class OSBridge:
                     "status": "ERROR",
                     "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
                 }
-            if pid <= 4:
+            if pid <= 100:
                 return {
                     "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to freeze protected PID {pid}. Blocked.",
+                    "reason": f"CRITICAL: Attempt to freeze core OS/Kernel PID {pid}. Blocked.",
                 }
             if pid in (os.getpid(), os.getppid()):
                 return {
                     "status": "ERROR",
                     "reason": "CRITICAL: Refusing to freeze the current or parent process.",
                 }
+
+            # Removed psutil.pid_exists() TOCTOU Anti-Pattern.
+            # Relying solely on the Atomic execution of os.kill and the subsequent exception handling.
 
             if self.os_type == "Linux":
                 os.kill(pid, signal.SIGSTOP)
@@ -139,7 +172,10 @@ class OSBridge:
                 "reason": "Cryogenic freeze is only supported on Linux and Windows hosts.",
             }
         except ProcessLookupError:
-            return {"status": "ERROR", "reason": f"PID {pid} not found."}
+            return {
+                "status": "GHOST_PROCESS",
+                "reason": f"PID {pid} not found (died atomically before execution).",
+            }
         except PermissionError:
             return {
                 "status": "ERROR",
@@ -156,10 +192,10 @@ class OSBridge:
                     "status": "ERROR",
                     "reason": f"CRITICAL: Attempt to thaw illegal PID {pid}. Blocked.",
                 }
-            if pid <= 4:
+            if pid <= 100:
                 return {
                     "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to thaw protected PID {pid}. Blocked.",
+                    "reason": f"CRITICAL: Attempt to thaw core OS/Kernel PID {pid}. Blocked.",
                 }
             if pid in (os.getpid(), os.getppid()):
                 return {
@@ -184,57 +220,64 @@ class OSBridge:
                 "status": "ERROR",
                 "reason": "Thaw is only supported on Linux and Windows hosts.",
             }
+        except ProcessLookupError:
+            # Added atomic Ghost Process handler for thaw_process as well
+            return {
+                "status": "GHOST_PROCESS",
+                "reason": f"PID {pid} not found (died atomically before execution).",
+            }
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
 
     def _windows_open_process(self, pid: int):
         PROCESS_SUSPEND_RESUME = 0x0800
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = ctypes.windll.kernel32.OpenProcess(
-            PROCESS_SUSPEND_RESUME | PROCESS_QUERY_LIMITED_INFORMATION,
-            False,
-            pid,
-        )
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
         if not handle:
-            raise OSError(f"Failed to open process {pid} for suspension.")
+            raise OSError(
+                f"Failed to open process {pid} with SUSPEND/RESUME rights (Access Denied or Bitness Mismatch)."
+            )
         return handle
 
     def _windows_suspend_process(self, pid: int) -> dict:
         try:
             handle = self._windows_open_process(pid)
-            status = ctypes.windll.ntdll.NtSuspendProcess(handle)
-            ctypes.windll.kernel32.CloseHandle(handle)
-            if status == 0:
+            try:
+                status = ctypes.windll.ntdll.NtSuspendProcess(handle)
+                if status == 0:
+                    return {
+                        "status": "SUCCESS",
+                        "action": "FROZEN",
+                        "pid": pid,
+                        "os": "Windows",
+                        "method": "NTSuspendProcess",
+                    }
                 return {
-                    "status": "SUCCESS",
-                    "action": "FROZEN",
-                    "pid": pid,
-                    "os": "Windows",
-                    "method": "NTSuspendProcess",
+                    "status": "ERROR",
+                    "reason": f"NtSuspendProcess failed with status {status}.",
                 }
-            return {
-                "status": "ERROR",
-                "reason": f"NtSuspendProcess failed with status {status}.",
-            }
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
 
     def _windows_resume_process(self, pid: int) -> dict:
         try:
             handle = self._windows_open_process(pid)
-            status = ctypes.windll.ntdll.NtResumeProcess(handle)
-            ctypes.windll.kernel32.CloseHandle(handle)
-            if status == 0:
+            try:
+                status = ctypes.windll.ntdll.NtResumeProcess(handle)
+                if status == 0:
+                    return {
+                        "status": "SUCCESS",
+                        "action": "THAWED",
+                        "pid": pid,
+                        "os": "Windows",
+                        "method": "NtResumeProcess",
+                    }
                 return {
-                    "status": "SUCCESS",
-                    "action": "THAWED",
-                    "pid": pid,
-                    "os": "Windows",
-                    "method": "NtResumeProcess",
+                    "status": "ERROR",
+                    "reason": f"NtResumeProcess failed with status {status}.",
                 }
-            return {
-                "status": "ERROR",
-                "reason": f"NtResumeProcess failed with status {status}.",
-            }
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
         except Exception as e:
             return {"status": "ERROR", "reason": str(e)}
