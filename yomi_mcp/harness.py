@@ -1,297 +1,189 @@
-import ctypes
-import os
-import platform
-import signal
-import shutil
+import json
 import psutil
+import os
+
+# Append root directory to sys.path
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: MCP Vault - OS Detector Bridge (v5.0 - THE HAL APEX)
-# Purpose: Hardware Abstraction Layer. Detects OS and available forensic
-#          binaries, then routes execution safely with real toolchain awareness.
-#          - Symlink Hijack Defeated: Resolves true disk paths via realpath.
-#          - Bitness Immunity: Minimal privilege OpenProcess for Wow64 stability.
-#          - Ghost Process Handling: Pre-emptive PID existence validation.
+# YOMI TRIAGE SYSTEM: MCP Vault - The Air-Gapped Harness & Veto Logic (v5.0)
+# Purpose: Strict Type-Safe execution boundary. Validates AI JSON intents and
+#          vetoes destructive/hallucinated commands via Zero-Trust Whitelisting.
+#          - Realpath Pinning: Defeats complex Symlink Hijacking / Path Spoofing.
+#          - Kernel Thread Immunity: Prevents freezing of intangible OS structures.
+#          - AccessDenied Handling: Safely defaults to protecting high-privilege daemons.
 # ==============================================================================
 
 
-class OSBridge:
+class YomiHarness:
     def __init__(self):
-        self.os_type = platform.system()
-        self.environment = "UNKNOWN"
-        self.tool_paths: dict[str, str] = {}
-        self.is_sift = False
-        self._initialize_bridge()
+        self.os_bridge = OSBridge()
+        self.allowed_actions = ["freeze", "thaw"]
 
-    def _initialize_bridge(self):
-        print(f"\n[YOMI-BRIDGE] Initializing Hardware Abstraction Layer...")
-        print(f"[YOMI-BRIDGE] Base OS Detected: {self.os_type}")
+    def _is_critical_system_pid(self, pid: int) -> bool:
+        """
+        Hardened Dynamic OS Protection.
+        Catches AccessDenied errors, resolves physical symlinks, and shields
+        Kernel Threads from accidental system-crashing interventions.
+        """
+        # Always protect absolute core kernel threads and root init (PID 0-100)
+        if pid <= 100:
+            return True
 
-        if self.os_type == "Windows":
-            self.environment = "WINDOWS"
-            print(
-                "[YOMI-BRIDGE] Windows host detected. Live SIFT toolchain support is limited."
+        try:
+            proc = psutil.Process(pid)
+            exe_path = proc.exe()
+
+            # Kernel threads (e.g., kworker, rcu_sched) live entirely in RAM and
+            # do not have a binary path on disk. If exe_path is empty, it's a kernel
+            # structure. We MUST protect it to prevent Kernel Panic.
+            if not exe_path:
+                return True
+
+            # Ghost Executable / Deleted Binary Protection
+            # Strip the Linux "(deleted)" suffix to recover the original path string
+            clean_exe_path = exe_path.replace(" (deleted)", "").strip()
+
+            # Force the OS to resolve the true physical location of the binary on disk.
+            # This shatters any illusions if malware is using complex symlinks to masquerade
+            # as a trusted system binary.
+            true_physical_path = os.path.realpath(clean_exe_path)
+
+            # Valid Linux system bin paths (Physically resolved boundaries)
+            safe_bin_dirs = ["/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"]
+
+            # O(1) Lookup set for critical daemon names
+            critical_binaries = {
+                "sshd",
+                "bash",
+                "sh",
+                "systemd",
+                "docker",
+                "dockerd",
+                "containerd",
+                "init",
+            }
+
+            basename = os.path.basename(true_physical_path)
+
+            # Check if the fully resolved physical path sits inside a trusted system directory
+            is_in_safe_dir = any(
+                true_physical_path.startswith(safe_dir) for safe_dir in safe_bin_dirs
             )
-            self._probe_toolchain()
 
-        elif self.os_type == "Linux":
-            self._probe_toolchain()
-            if self.is_sift:
-                self.environment = "SIFT_LINUX"
-                print(
-                    "[YOMI-BRIDGE] SIFT Workstation confirmed. Forensic binaries available."
-                )
-            elif self.can_execute_forensics():
-                self.environment = "LINUX_TOOLCHAIN"
-                print(
-                    "[YOMI-BRIDGE] Linux forensic toolchain detected. Partial SIFT capabilities are available."
-                )
-            else:
-                self.environment = "LINUX_MINIMAL"
-                print(
-                    "[YOMI-BRIDGE] Linux host detected with no SIFT binaries. Tool wrappers will report availability status."
-                )
+            # A process is only protected if it claims a critical name AND physically resides in a system folder.
+            if basename in critical_binaries and is_in_safe_dir:
+                return True
 
-        else:
-            self.environment = "UNKNOWN"
-            print(
-                f"[YOMI-BRIDGE] Unknown OS ({self.os_type}). Forensic tool detection will be limited."
-            )
-            self._probe_toolchain()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # AccessDenied usually means it's a higher-privilege system daemon or root process.
+            # Fail-safe policy: If we can't inspect it, protect it.
+            return True
 
-        self._display_detected_tools()
+        return False
 
-    def _probe_toolchain(self) -> None:
-        known_tools = {
-            "volatility": ["vol.py", "vol"],
-            "radare2": ["r2"],
-            "log2timeline": ["log2timeline.py", "log2timeline"],
-            "fls": ["fls"],
-            "img_stat": ["img_stat"],
-            "icat": ["icat"],
-            "tshark": ["tshark"],
-            "bulk_extractor": ["bulk_extractor"],
-            "yara": ["yara"],
-            "ssdeep": ["ssdeep"],
-            "strings": ["strings"],
-            "grep": ["grep"],
-            "reglookup": ["reglookup"],
-            "mftparser": ["mftparser"],
-            "scalpel": ["scalpel"],
-        }
+    def _veto_check(self, intent_data: dict) -> dict:
+        """
+        THE JUDGE: Evaluates the intent using strict Zero-Trust boundaries.
+        Returns a dictionary with 'is_vetoed' boolean and 'reason'.
+        """
+        raw_action = intent_data.get("action")
+        if not isinstance(raw_action, str):
+            return {
+                "is_vetoed": True,
+                "reason": "VETO: 'action' field must be a valid string.",
+            }
 
-        trusted_linux_paths = [
-            "/bin/",
-            "/sbin/",
-            "/usr/bin/",
-            "/usr/sbin/",
-            "/usr/local/bin/",
-            "/opt/",
-        ]
+        action = raw_action.lower().strip()
 
-        for tool_name, executable_names in known_tools.items():
-            resolved_path = ""
-            for exe in executable_names:
-                path = shutil.which(exe)
-                if path:
-                    # Defeat Symlink Hijacking
-                    # Convert to the true physical disk path to prevent malware from
-                    # creating a symlink in a safe folder that points to a malicious binary.
-                    true_path = (
-                        os.path.realpath(path) if self.os_type == "Linux" else path
-                    )
+        if action not in self.allowed_actions:
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: Action '{action}' denied. Only Type-Safe MCP operations {self.allowed_actions} are authorized.",
+            }
 
-                    if self.os_type == "Linux":
-                        is_trusted = any(
-                            true_path.startswith(tp) for tp in trusted_linux_paths
-                        )
-                        if not is_trusted:
-                            print(
-                                f"[YOMI-BRIDGE] [WARNING] Path Hijack Attempt? Ignored untrusted binary location: {true_path}"
-                            )
-                            continue  # Skip this untrusted binary
+        raw_pid = intent_data.get("target_pid")
+        if raw_pid is None:
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: Action '{action}' explicitly requires a 'target_pid'.",
+            }
 
-                    resolved_path = true_path
-                    break
-            self.tool_paths[tool_name] = resolved_path
+        try:
+            target_pid = int(raw_pid)
+        except (ValueError, TypeError):
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: 'target_pid' ('{raw_pid}') must be a strict integer.",
+            }
 
-        self.is_sift = bool(
-            self.tool_paths.get("volatility") and self.tool_paths.get("fls")
+        # Route the PID through the Hardened OS Protection Shield
+        if self._is_critical_system_pid(target_pid):
+            return {
+                "is_vetoed": True,
+                "reason": f"VETO: Target PID {target_pid} is classified as a protected critical OS process or access was denied.",
+            }
+
+        return {"is_vetoed": False, "reason": "Intent validated. Execution authorized."}
+
+    def process_intent(self, ai_response: str) -> dict:
+        """
+        The main entry point for AI communication.
+        Accepts JSON string, validates schema, runs Veto check, and executes safely.
+        """
+        try:
+            intent_data = json.loads(ai_response)
+            if not isinstance(intent_data, dict):
+                raise ValueError("Parsed JSON is not a key-value object.")
+        except (json.JSONDecodeError, ValueError) as e:
+            return {
+                "status": "ERROR",
+                "message": f"HARNESS REJECTED: AI output is not a valid JSON intent object. ({e})",
+            }
+
+        print(
+            f"\n[YOMI-HARNESS] Received AI Intent: {intent_data.get('action')} on target {intent_data.get('target_pid')}"
         )
 
-    def _display_detected_tools(self) -> None:
-        print("[YOMI-BRIDGE] Forensic tool availability:")
-        for name, path in sorted(self.tool_paths.items()):
-            print(f"  - {name}: {'available' if path else 'missing'}")
+        # Execute the absolute Veto assessment
+        veto_result = self._veto_check(intent_data)
 
-    def is_tool_available(self, tool_name: str) -> bool:
-        return bool(self.tool_paths.get(tool_name))
+        if veto_result["is_vetoed"]:
+            print(f"[YOMI-HARNESS] [BLOCKED] {veto_result['reason']}")
+            return {"status": "VETOED", "message": veto_result["reason"]}
 
-    def get_tool_path(self, tool_name: str) -> str:
-        return self.tool_paths.get(tool_name, "")
+        # Unpack verified and safe data
+        action = intent_data.get("action", "").lower().strip()
+        target_pid = int(intent_data.get("target_pid"))
 
-    def can_execute_forensics(self) -> bool:
-        return any(bool(path) for path in self.tool_paths.values())
+        print(f"[YOMI-HARNESS] [AUTHORIZED] Intent Validated. Routing to OS Bridge...")
 
-    def is_reduced_mode(self) -> bool:
-        return self.environment not in {"SIFT_LINUX", "LINUX_TOOLCHAIN"}
+        # Atomically route to the HAL (Hardware Abstraction Layer)
+        if action == "freeze":
+            return self.os_bridge.cryogenic_freeze(target_pid)
+        elif action == "thaw":
+            return self.os_bridge.thaw_process(target_pid)
 
-    def cryogenic_freeze(self, pid: int) -> dict:
-        try:
-            pid = int(pid)
-            if pid <= 0:
-                return {
-                    "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to freeze illegal PID {pid}. Blocked.",
-                }
-            if pid <= 100:
-                return {
-                    "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to freeze core OS/Kernel PID {pid}. Blocked.",
-                }
-            if pid in (os.getpid(), os.getppid()):
-                return {
-                    "status": "ERROR",
-                    "reason": "CRITICAL: Refusing to freeze the current or parent process.",
-                }
+        return {
+            "status": "ERROR",
+            "message": "Action valid but no OS routing defined in Harness execution map.",
+        }
 
-            # Pre-emptive Ghost Process Validation
-            if not psutil.pid_exists(pid):
-                return {
-                    "status": "GHOST_PROCESS",
-                    "reason": f"Target PID {pid} died before execution. No action needed.",
-                }
 
-            if self.os_type == "Linux":
-                os.kill(pid, signal.SIGSTOP)
-                return {
-                    "status": "SUCCESS",
-                    "action": "FROZEN",
-                    "pid": pid,
-                    "os": "Linux",
-                    "method": "SIGSTOP",
-                }
+# ==============================================================================
+# DEVELOPMENT TESTING BLOCK
+# ==============================================================================
+if __name__ == "__main__":
+    harness = YomiHarness()
 
-            if self.os_type == "Windows":
-                return self._windows_suspend_process(pid)
+    # Simulate valid freeze payload
+    safe_payload = '{"action": "freeze", "target_pid": 99999}'
+    print(harness.process_intent(safe_payload))
 
-            return {
-                "status": "ERROR",
-                "reason": "Cryogenic freeze is only supported on Linux and Windows hosts.",
-            }
-        except ProcessLookupError:
-            return {
-                "status": "GHOST_PROCESS",
-                "reason": f"PID {pid} not found (died during execution).",
-            }
-        except PermissionError:
-            return {
-                "status": "ERROR",
-                "reason": f"Permission denied to freeze PID {pid}. Root/Admin required.",
-            }
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
-
-    def thaw_process(self, pid: int) -> dict:
-        try:
-            pid = int(pid)
-            if pid <= 0:
-                return {
-                    "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to thaw illegal PID {pid}. Blocked.",
-                }
-            if pid <= 100:
-                return {
-                    "status": "ERROR",
-                    "reason": f"CRITICAL: Attempt to thaw core OS/Kernel PID {pid}. Blocked.",
-                }
-            if pid in (os.getpid(), os.getppid()):
-                return {
-                    "status": "ERROR",
-                    "reason": "CRITICAL: Refusing to thaw the current or parent process.",
-                }
-
-            # Pre-emptive Ghost Process Validation
-            if not psutil.pid_exists(pid):
-                return {
-                    "status": "GHOST_PROCESS",
-                    "reason": f"Target PID {pid} died before execution. No action needed.",
-                }
-
-            if self.os_type == "Linux":
-                os.kill(pid, signal.SIGCONT)
-                return {
-                    "status": "SUCCESS",
-                    "action": "THAWED",
-                    "pid": pid,
-                    "os": "Linux",
-                    "method": "SIGCONT",
-                }
-
-            if self.os_type == "Windows":
-                return self._windows_resume_process(pid)
-
-            return {
-                "status": "ERROR",
-                "reason": "Thaw is only supported on Linux and Windows hosts.",
-            }
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
-
-    def _windows_open_process(self, pid: int):
-        """
-        Reduced Privilege Footprint for Wow64 Bitness Immunity
-        Removed PROCESS_QUERY_LIMITED_INFORMATION (0x1000) to avoid Access Denied
-        on strict environments or 32-bit/64-bit cross-boundary operations.
-        """
-        PROCESS_SUSPEND_RESUME = 0x0800
-        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
-        if not handle:
-            raise OSError(
-                f"Failed to open process {pid} with SUSPEND/RESUME rights (Access Denied or Bitness Mismatch)."
-            )
-        return handle
-
-    def _windows_suspend_process(self, pid: int) -> dict:
-        try:
-            handle = self._windows_open_process(pid)
-            try:
-                status = ctypes.windll.ntdll.NtSuspendProcess(handle)
-                if status == 0:
-                    return {
-                        "status": "SUCCESS",
-                        "action": "FROZEN",
-                        "pid": pid,
-                        "os": "Windows",
-                        "method": "NTSuspendProcess",
-                    }
-                return {
-                    "status": "ERROR",
-                    "reason": f"NtSuspendProcess failed with status {status}.",
-                }
-            finally:
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
-
-    def _windows_resume_process(self, pid: int) -> dict:
-        try:
-            handle = self._windows_open_process(pid)
-            try:
-                status = ctypes.windll.ntdll.NtResumeProcess(handle)
-                if status == 0:
-                    return {
-                        "status": "SUCCESS",
-                        "action": "THAWED",
-                        "pid": pid,
-                        "os": "Windows",
-                        "method": "NtResumeProcess",
-                    }
-                return {
-                    "status": "ERROR",
-                    "reason": f"NtResumeProcess failed with status {status}.",
-                }
-            finally:
-                ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception as e:
-            return {"status": "ERROR", "reason": str(e)}
+    # Simulate malicious hallucination payload aiming at init (PID 1)
+    malicious_payload = '{"action": "freeze", "target_pid": 1}'
+    print(harness.process_intent(malicious_payload))
