@@ -56,13 +56,26 @@ Yomi was meticulously engineered to directly answer the core challenges and stri
 
 | SANS Challenge / Criteria | The Yomi Architectural Solution |
 | :--- | :--- |
-| **The Speed Problem (Beat 60s AI Breakout)** | **Defeated.** Yomi's `telemetry.py` benchmarks demonstrate a Time-to-Containment of **~3.002 seconds**. The engine uses ultra-fast `psutil` kernel polling and eBPF tracepoints instead of heavy shell commands, massively out-speeding adversary AI. |
+| **The Speed Problem (Beat 60s AI Breakout)** | **Defeated.** Yomi's `telemetry.py` benchmarks demonstrate a Time-to-Containment of **~3.002 seconds**. The Sentinel daemon leverages the Evidence Swarm for rapid User-Space/Socket anomaly detection. Upon C2 confirmation, it bypasses LLM latency entirely ("Shoot First" logic) and executes containment through **Atomic OS Syscalls (`kill -STOP`)**. If the threat is obfuscated, it escalates to Ring-0 eBPF Tracepoints. This multi-tiered approach completely eliminates TOCTOU gaps and out-speeds adversary AI. |
 | **Judging 1: Autonomous Execution & Self-Correction** | **The Triad Council.** Yomi calculates an "Epistemic Doubt Threshold". If the AI doubt is > 40%, it autonomously self-corrects, refuses to execute a freeze, and escalates to `shadow_net.py` for deeper eBPF Ring-0 surveillance. |
 | **Judging 4: Architectural vs. Prompt-Based Guardrails** | **100% Architectural Enforcement (Custom MCP Server).** Yomi does not trust the LLM. The MCP server (`sift_toolkit.py`) exposes strict functions (no `shell=True`). Tools are read-only. File access utilizes *Inode Pinning (Hardlinks)* and `/proc/self/fd` to architecturally obliterate Destructive TOCTOU and Command Injection risks. |
 | **Context Window Overload (The SIFT Dump Problem)** | **Anti-OOM RAM Limiter & Omni-Sanitizer.** SIFT tools (like Volatility) can dump Gigabytes of data. Yomi's Swarm orchestrator physically bounds RAM reads (max 2MB), extracts purely relevant IoCs (IPs, PIDs, MITRE Tactics), and strips ANSI/Newline injections *before* context is sent to the LLM. |
 | **Judging 5: Audit Trail Quality** | **Cryptographic Chain of Custody (`stamp.py`).** Every AI decision, tool execution, and state change is HMAC-SHA256 signed in an append-only JSONL ledger. The `weaver.py` module then converts this to a human-readable Temporal Narrative, proving exactly *why* a specific tool was fired. |
 | **Judging 2: IR Accuracy & Hallucination Defense** | **Zero-Hallucination Threat Intel.** Yomi utilizes `library.py`, a local O(1) in-memory LRU cache database. It matches Volatility/TShark findings to local CVE definitions, stripping the LLM of its ability to fabricate or hallucinate threat intel. |
 | **Judging 3: Breadth and Depth of Analysis** | **Multi-Layered Hunting.** Scans RAM (`Memory_Agent`), Network (`Network_Agent`), Kernel Ring-0 (`Shadow_Net`), and Disk Timelines (`Hunter`). If malware is fileless, Yomi's *Secure ELF Necromancy* recovers the payload directly from RAM into an isolated vault for the `Sandbox` to analyze. |
+
+### 2.1 The Yomi MCP Architecture Table (Extreme Hardening)
+Unlike typical LLM agent wrappers, Yomi's MCP Vault was engineered specifically to survive hostile, adversarial environments (Extreme Penetration Testing conditions).
+
+| Adversarial Tactic / Tool Failure | The Yomi MCP Server Mitigation (v11.0) |
+| :--- | :--- |
+| **Command Injection (RCE)** | **Absolute Regex Sealing.** Eradicates shell chaining `[;&\|$<>]` while preserving literal quotes for YARA/Regex syntax evaluation. |
+| **Flag Injection Evasion** | **Literal Option Barriers.** Injects `--` before dynamic arguments, preventing malware named `-v` or `-p` from being parsed as CLI tool options by `grep` or `yara`. |
+| **Thread Exhaustion DoS** | **Atomic Load Shedding.** Global Thread Pool capped at 5 workers. Incoming requests beyond capacity are instantly vetoed (0s latency), preventing server queue freezing. |
+| **I/O Blocking Deadlocks** | **Non-Blocking OS Descriptors.** Pipes utilize `fcntl.O_NONBLOCK`. If a C-binary hangs without closing its buffer, Yomi safely reads partial bytes without locking the main execution thread. |
+| **Zombie Process CPU Starvation** | **Process Group Annihilation.** Forensic tools are launched with `start_new_session=True`. On timeout, `os.killpg()` atomically destroys the tool and all runaway child processes. |
+| **Binary Extraction Corruption** | **Write-Binary Integrity.** Tools like `icat` extract unallocated inodes strictly in `"wb"` mode, preventing Python UTF-8 coercion from corrupting malware MD5/SSDEEP hashes. |
+| **Context Window Blowout (OOM)** | **100KB Context Shield.** Massive artifacts (like 16GB memory strings) are dynamically truncated at 100,000 characters before hitting the LLM context limits. |
 
 ## 3. Core Value Proposition / Key Features
 
@@ -72,6 +85,8 @@ Designed to fulfill SANS's **"Purpose-Built MCP Server"** and **"Direct Agent Ex
 * **Epistemic Doubt & ReAct Self-Correction:** Yomi's "Triad Council" utilizes an epistemic doubt threshold. If the LLM's uncertainty exceeds 40%, it vetoes the containment action and triggers autonomous self-correction or escalates to deeper forensic hunts (e.g., eBPF Kernel Tracing or TSK filesystem analysis).
 * **Air-Gapped Resilient Engine:** Yomi does not strictly rely on cloud API connectivity. If Gemini credentials are unavailable or the host is network-isolated, Yomi's Circuit Breaker seamlessly falls back to Local On-Premise LLMs (Llama3 via Ollama) and continues triage without internet access.
 * **Anti-Spoliation Chain of Custody:** Every autonomous decision and tool execution is mathematically hashed (HMAC-SHA256) and sealed in an append-only JSONL cryptographic ledger (`stamp.py`), ensuring court admissibility.
+* **Zero Evidence Spoliation (Boundary-Aware Vaults):** The AI physically cannot run destructive commands. Tools are exposed as typed, structured functions. The MCP server implements rigorous `os.path.commonpath` boundary checks, strictly isolating Read-Only forensic dumps (`READ_VAULTS`) from writable extraction directories (`WRITE_VAULTS`) to preserve absolute Chain of Custody.
+* **Thread Exhaustion DoS Immunity & VVIP Routing:** Yomi protects itself from Forensic DoS (F-DoS) attacks. It utilizes an Atomic Load Shedding Gatekeeper with a bounded Global Thread Pool. If forensic agents are saturated, Yomi instantaneously drops queued tasks (0s latency) to save RAM. However, critical containment commands (`run_cryogenic_freeze`) are routed via a VVIP OS track, completely bypassing the thread pool to guarantee < 10ms OS suspension, even under extreme load.
 
 ## 4. System Architecture & Data Flow
 
@@ -83,7 +98,7 @@ Yomi intentionally separates the forensic ingestion layer, AI reasoning layer, a
 graph TD;
     %% Artifact Sources & Evidence Swarm
     subgraph "Data Ingestion (The Evidence Swarm)"
-        A1[Live Socket Polling via psutil]
+        A1[eBPF Ring-0 Telemetry & Netlink]
         A2[Disk Images / Memory Dumps]
         A3[PCAP / Network Traffic]
         V[Inode Pinning Vault & Anti-TOCTOU]
@@ -93,8 +108,10 @@ graph TD;
     %% Yomi Hardware Abstraction
     subgraph "Yomi Core Execution Bridge"
         B[OSBridge / Tool Discovery]
-        C[SiftArsenal Type-Safe Wrappers]
-        S[Anti-ReDoS Omni-Sanitizer]
+        LS[Load Shedding Gatekeeper]
+        VVIP[VVIP OS Routing: Zero-Latency]
+        C[SiftArsenal: Global Thread Pool]
+        S[Anti-ReDoS & 100KB Context Shield]
     end
 
     %% AI Brain
@@ -119,8 +136,10 @@ graph TD;
 
     %% Data Flow
     A1 & V --> B
-    B --> C
-    C -- "OOM Capped (2MB) Output" --> S
+    B --> LS
+    LS -- "Freeze/Thaw Commands" --> VVIP
+    LS -- "Forensic Tools (If Pool < 5)" --> C
+    VVIP & C -- "Outputs" --> S
     S -- "Masked Tokens & Safe Context" --> E1
     E1 -- "Rate Limit / Offline" --> E2
     E1 & E2 --> F
@@ -130,7 +149,6 @@ graph TD;
     I & F --> T
     I & G --> H
     H -- "O(1) Physical Byte-Chunk Tailing" --> W
-
 ```
 
 ### 4.2 MCP Tool Execution & Anti-Spoliation Data Flow
@@ -142,38 +160,33 @@ This sequence demonstrates how the MCP Server acts as an architectural guardrail
 sequenceDiagram;
     participant LLM as OpenClaw LLM
     participant Swarm as Evidence Swarm
-    participant Bridge as OSBridge (HAL)
-    participant SIFT as SIFT Toolkit (MCP Vault)
-    participant Parser as Omni-Sanitizer
+    participant Vault as MCP Vault (Load Shedding)
+    participant SIFT as SIFT Toolkit (C-Binaries)
 
     LLM->>Swarm: Request execution (e.g., run_volatility_netscan)
-    Swarm->>Swarm: Execute os.link (Inode Pinning)
-
-    alt Disk Exhaustion / Cross-Device Link Fails
-        Swarm->>Swarm: Fallback: Execute os.chmod 0o444 (Read-Only)
+    Swarm->>Vault: Dynamic Argument Validation
+    
+    alt Command Injection or Boundary Violation
+        Vault-->>LLM: VETO: Path traversal or shell operator detected
     end
 
-    Swarm->>Bridge: Query tool availability & Validate Schema
-    Bridge-->>Swarm: Returns Absolute Binary Path
+    Vault->>Vault: Check Active Tasks (Load Shedding)
+    alt Saturated (Active >= MAX_WORKERS)
+        Vault-->>LLM: VETO: SYSTEM OVERLOAD. Request Dropped.
+    else Worker Available
+        Vault->>SIFT: Dispatch to Global Thread Pool (shell=False)
 
-    alt Tool Not Installed
-        Swarm-->>LLM: Error: "Tool unavailable in current OS"
-        LLM->>LLM: Fallback to Alternative Tool/Strategy
-    else Tool Found
-        Swarm->>SIFT: Pass secure path via Array Argument (No shell=True)
-
-        alt Execution Timeout or Crash
-            SIFT-->>Swarm: Non-zero exit code / TimeoutExpired
-            Swarm-->>LLM: Error: "Tool execution failed or timed out"
-            LLM->>LLM: Autonomous Self-Correction
+        alt Execution Timeout (> 300s)
+            SIFT->>SIFT: os.killpg() (Annihilate Zombie Process Tree)
+            SIFT-->>Vault: TimeoutExpired
+            Vault-->>LLM: Error: "Execution Timeout. Operation orphaned."
         else Execution Success
-            SIFT-->>Swarm: Massive Raw Output Stream (Gigabytes)
-            Swarm->>Parser: Truncate at 2MB (Anti-OOM)
-            Parser->>Parser: Strip ANSI/Newlines & Mask Secrets (Anti-ReDoS)
-            Parser-->>LLM: Safe, Canonicalized IoC Context
+            SIFT->>SIFT: OS Non-Blocking I/O Buffer Reads
+            SIFT-->>Vault: Massive Raw Output Stream
+            Vault->>Vault: Apply 100KB Context Shield
+            Vault-->>LLM: Safe, Truncated IoC Context
         end
     end
-
 ```
 
 ## 5. Yomi Lifecycle & Module Interoperability
@@ -234,7 +247,7 @@ stateDiagram-v2
 
 Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advanced DFIR subsystems to outmaneuver modern malware:
 
--   **The Evidence Swarm (`swarm.py`):** The central orchestrator. Hardened with **Inode Pinning (OS Hardlinks)** to completely obliterate Time-of-Check to Time-of-Use (TOCTOU) attacks. It utilizes an **Anti-OOM RAM Limiter (2MB Cap)** and bounded regex to prevent Catastrophic Backtracking (ReDoS) when ingesting gigabytes of Volatility data.
+- **The Evidence Swarm (`swarm.py`):** The central orchestrator. Hardened with **Inode Pinning (OS Hardlinks)** to completely obliterate Time-of-Check to Time-of-Use (TOCTOU) attacks. It utilizes an **Anti-OOM Context Shield (100KB Dynamic Truncation)** and bounded regex to prevent Catastrophic Backtracking (ReDoS) when ingesting massive datasets from Volatility or Plaso.
 
 -   **Chronos Telemetry Engine (`telemetry.py`):** Proves the "Speed Problem" resolution. Uses a **Dual-Lock Architecture** and **O(1) Memory Eviction** to ensure zero RAM bloat during massive, multi-threaded incident tracking, delivering cryptographically signed latency benchmarks.
 
@@ -246,7 +259,7 @@ Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advance
 
 -   **OmniVector Root-Cause Hunter (`hunter.py`):** Traces "Patient Zero" by correlating Volatility memory artifacts with Plaso super-timelines and TSK deleted file recoveries, utilizing strict word-boundary Regex.
 
--   **Mind-Reader Decompiler (`mind_reader.py`):** Autonomously executes Radare2 against frozen malware to extract Assembly logic, feeds it back to the OpenClaw LLM for psychological profiling, and securely injects the newly learned behavior back into the OmniLibrary via Schema Mimicry (`CVE-YYYY-YOMI`).
+-   **Mind-Reader Decompiler (`mind_reader.py`):** Autonomously executes Radare2 against frozen malware to extract Assembly logic and feeds it to the OpenClaw LLM for psychological threat actor profiling. Built with a **Native Python Extraction Fallback**: if Radare2 fails or is unavailable, it gracefully degrades to a native 1MB binary string extraction to ensure the LLM never loses actionable artifacts.
 
 -   **The Lazarus Chamber & Mirage Protocol (`mirage.py`):** A deep isolation sandbox. Extracted malware is awakened (`SIGCONT`) within a synthetic hallucinated environment (Honeytokens like fake `/etc/shadow`) to monitor behavioral signatures safely.
 
@@ -261,6 +274,8 @@ Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advance
 Yomi is built with enterprise audit standards to ensure forensic integrity during automated response operations:
 
 -   **HMAC-SHA256 Cryptographic Ledger (`stamp.py`):** Implements deterministic JSON canonicalization. Every action receives a unique signature keyed with an isolated `audit_hmac.key`, preventing post-incident tampering by threat actors.
+
+-   **Court-Ready Dual-Artifact Dossiers (`dossier.py`):** The Temporal Narrative is automatically compiled into both PDF and raw TXT annexes. Crucially, Yomi dynamically interfaces with the host's GPG binaries to apply detached cryptographic signatures (`.asc`) to the final reports, ensuring absolute legal admissibility and proof against post-incident spoliation.
 
 -   **Optional KMS-backed HMAC key storage:** Yomi can load the ledger key from a remote key management service when configured via `YOMI_AUDIT_HMAC_KMS_PROVIDER`.
 
@@ -278,13 +293,13 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 
 -   **Python:** 3.10+
 
--   **System Dependencies & Clarification:**
+- **System Dependencies & Clarification:**
 
-    -   `psutil`: Used **strictly** for baseline host CPU/RAM telemetry. Yomi **does not** use `psutil` for process control or deep monitoring.
+    - `psutil`: Used for baseline host telemetry (CPU/RAM) and as a **Live Socket Polling fallback** to detect C2 beacons when PCAP data is unavailable. Yomi **does not** use `psutil` for process control.
 
-    -   *Process Manipulation:* Handled natively via OS-level signals (`SIGSTOP`, `SIGCONT`, `kill -9`).
+    - *Process Manipulation:* Handled natively and atomically via OS-level signals (`SIGSTOP`, `SIGCONT`, `kill -9`).
 
-    -   *Deep Monitoring:* Handled via **eBPF (bcc)** in the kernel space.
+    - *Deep Kernel Monitoring:* Handled via **eBPF (bcc)** in the kernel space for escalated threat verification.
 
 -   **SIFT Toolchain Dependencies (Must be in PATH):**
 
@@ -301,7 +316,7 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 **Step 1: Clone into the SIFT Workstation**
 
 ```bash
-git clone [https://github.com/ArcVielLouvent/yomi-triage-system.git](https://github.com/ArcVielLouvent/yomi-triage-system.git)
+git clone https://github.com/ArcVielLouvent/yomi-triage-system.git
 cd yomi-triage-system
 
 ```
@@ -319,29 +334,43 @@ sudo apt-get install bpfcc-tools linux-headers-$(uname -r) python3-bpfcc
 
 **Step 3: Environment Configuration**
 
-You do **not** need to manually configure `.env` files for the API key. Yomi features an Elegant Interactive Onboarding. Simply launch the system, and the Obsidian Torii Gateway will securely prompt and save your API Key to `yomi_data/config.json`.
+To maintain absolute operational security and prevent credential dumping during an incident, Yomi strictly utilizes OS-level Environment Variables. It does not write API keys to disk. Export your credentials before launching:
+
+```bash
+export YOMI_GEMINI_API_KEY="your_api_key_here"
+
+# Optional: Override the default local LLM endpoint (Defaults to local Ollama)
+export YOMI_LOCAL_LLM_URL="your_local_llm_url"
+```
 
 ## 10. Usage & Operational Commands
 
-Yomi uses a centralized CLI entry point (`cli.py`) to manage its various daemons and interfaces. *Note: Using `sudo` is highly recommended to enable Ring-0 eBPF monitoring, Kernel Socket Polling, and Secure Inode Hardlinking.*
+Yomi uses a centralized CLI entry point (`cli.py`) to manage its various daemons and interfaces. *Note: Using `sudo` is strictly required to enable Ring-0 eBPF Tracepoint Interception, Event-Driven OS Telemetry, and Secure Inode Hardlinking.*
 
 **1. Launch Obsidian Torii Gateway (Interactive TUI & Autonomous Mode):**
 
 ```bash
 sudo python3 yomi_core/cli.py --auto
+```
+
+**2. Launch with Ghost Protocol (Deep OS Camouflage):
+
+Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., [kworker/u4:2]).
+
+```bash
+sudo YOMI_ENABLE_GHOST_PROTOCOL=true python3 yomi_core/cli.py --auto
 
 ```
 
-**2. Launch as Background Daemon (Headless):**
+**3. Launch as Background Daemon (Headless):**
 
 ```bash
 sudo python3 yomi_core/cli.py --auto --headless
-
 ```
 
-**3. Install OS-Level Boot Persistence:**
+**4. Install OS-Level Boot Persistence:**
 
-Installs Yomi as a Systemd service (Linux) or Registry AutoRun (Windows) so it starts autonomously on boot.
+Installs Yomi as a Systemd service (Linux) or Registry AutoRun (Windows).
 
 ```bash
 sudo python3 yomi_core/cli.py --install
@@ -355,20 +384,28 @@ sudo python3 yomi_core/cli.py --install
 
 ```mermaid
 flowchart TD;
-    A[Anomaly Detected] --> B{Memory Dump Available?}
-    B -- Yes --> C[Volatility / Netscan]
-    B -- No --> D[Live Socket Analysis]
-    C --> E{C2 Confirmed?}
-    D --> E
-    E -- Yes --> F[Trigger Zero-Prompt Triage]
-    E -- No --> G[Continue Patrol]
-    F --> H{Epistemic Doubt < 40%?}
-    H -- Yes --> I[Execute Freeze/Containment]
-    H -- No --> J[Shadow Net eBPF Surveillance]
-    J --> F
-    I --> K[Forensic Isolation & Static Profiling]
-    K --> L[Audit Log Cryptographically Sealed]
-
+    A[Anomaly Detected by Evidence Swarm] --> B{Initial Threat Score?}
+    
+    %% VVIP Containment Route
+    B -- CRITICAL (C2/Ransomware) --> VVIP[VVIP OS Track: Instant SIGSTOP]
+    VVIP --> D[Containment Achieved < 10ms]
+    
+    %% Forensic Analysis Route
+    B -- SUSPICIOUS --> C[Deep Artifact Ingestion]
+    C --> E{MCP Vault Tasks >= 5?}
+    
+    E -- YES (Overloaded) --> G[Load Shedding: Veto Request to Protect RAM]
+    G --> K[Escalate to Ring-0 eBPF Surveillance]
+    
+    E -- NO (Available) --> F[Execute SIFT Tools via Global Thread Pool]
+    F --> H[Truncate Output via 100KB Context Shield]
+    H --> I[OpenClaw LLM Analysis]
+    
+    I --> J{Epistemic Doubt < 40%?}
+    J -- YES (Confident) --> VVIP
+    J -- NO (Uncertain) --> K
+    
+    D --> L[Cryptographic Audit Sealed in Ledger]
 ```
 
 ### Supported MITRE ATT&CK Mapping
@@ -399,52 +436,56 @@ Yomi executes forensic workflows magnitudes faster than human analysts. Below is
 
 ## 13. Threat Model & Security Boundaries
 
--   **LLM Hallucination / Prompt Injection Boundaries:** Yomi treats the LLM purely as an untrusted inference engine. The LLM cannot execute arbitrary bash commands. It must return a structured JSON intent asking to invoke pre-defined MCP tools.
+- **LLM Hallucination & Command Injection (RCE):** Yomi treats the LLM purely as an untrusted inference engine. The custom MCP Server implements an impenetrable regex shield `(\$\(|`|\||;|&&|\|\||>)` to eradicate Shell Chaining/Subshell attacks, while safely preserving quoting for YARA/Regex execution.
 
--   **Context Exhaustion Protection:** By utilizing the Custom MCP Server model, Yomi prevents LLM context degradation. When `bulk_extractor` or `r2` outputs megabytes of text, the MCP wrapper truncates, parses, and provides only the relevant tactical indicators to the LLM (capped at 2000 chars per stream).
+- **Forensic Denial of Service (F-DoS) & Thread Exhaustion:** To prevent an adversary from spamming heavy forensic tools to exhaust the server's RAM, Yomi deploys an Atomic Load Shedding Gatekeeper. It caps the Global Thread Pool at 5 workers. Incoming requests beyond this limit are instantly vetoed (0s latency). Critical containment signals (`run_cryogenic_freeze`) operate on a VVIP OS Track, bypassing the thread pool entirely for guaranteed microsecond execution.
 
--   **Evidence Spoliation:** All analysis is performed on extracted artifacts or via `SIGSTOP` on live targets. The system never utilizes `SIGCONT` (thaw) to wake up isolated malware on the host OS, relying entirely on Static Analysis (Radare2) or the isolated Lazarus Chamber to prevent accidental detonation.
+- **Context Exhaustion Protection (Context Shield):** When tools like `strings_grep` output gigabytes of text, the SIFT Toolkit buffers via Non-Blocking OS pipes (`fcntl.O_NONBLOCK`) and strictly truncates output at 100,000 characters (100KB). This ensures local, air-gapped LLMs never crash from Context Window Blowout.
+
+- **Evidence Spoliation & Binary Integrity:** Tools are rigidly mapped to `READ_VAULTS` and `WRITE_VAULTS` utilizing absolute structural boundary checks (`os.path.commonpath`). Furthermore, raw artifact extractions (like TSK `icat`) are strictly written in Write-Binary (`wb`) mode, guaranteeing the structural integrity and exact cryptographic hashes of recovered malware are perfectly preserved without UTF-8 corruption.
 
 ## 14. Advanced Security Architecture Attachment
 
 ### 1. Lightweight Mini-Container Isolation
 
-To reduce the risk of escape when handling potentially malicious samples, Yomi implements a mini-container option with:
+To reduce the risk of escape when handling potentially malicious samples, Yomi implements a mini-container option within the Lazarus Chamber (`sandbox.py`):
 
--   Linux Namespaces: `pid`, `net`, `mount`
+- Linux Namespaces: `pid`, `net`, `mount`
 
--   OverlayFS COW layer: `lowerdir` read-only + `upperdir` writable
+- OverlayFS COW layer: `lowerdir` read-only + `upperdir` writable
 
--   `chroot` against a highly restricted root filesystem
+- `chroot` against a highly restricted root filesystem
 
--   `unshare -r -n -m --mount-proc` to separate network and PID from host
+- `unshare -n -m -p -f --mount-proc` (Crucially omitting the `-r` flag to prevent container escapes via pseudo-root UID mappings).
 
 ### 2. Large Output Processing
 
-Yomi no longer loads large forensic tool output entirely into RAM. Instead, the streaming toolkit reads results incrementally in small blocks (4KB), extracts up to 2000 relevant characters, and then kills the process if necessary to prevent OOM.
+Yomi no longer loads large forensic tool output entirely into RAM. The SIFT Toolkit implements OS-level Non-Blocking file descriptors (`fcntl.O_NONBLOCK`) to read results incrementally without deadlocking the server. Results are dynamically truncated to a 100KB safety limit. Furthermore, to prevent CPU starvation, Yomi executes tools using `start_new_session=True`. If a heavy forensic tool times out, Yomi executes a Kernel-level `os.killpg()` to atomically annihilate the tool and all its runaway zombie child processes.
 
-### 3. Local Air-Gapped Architecture
+### 3. Local Air-Gapped Architecture & Cascade Fallback
 
-For isolated systems without the internet, Yomi operates with a lightweight local model hosted on the machine:
+Yomi's `OpenClawGateway` implements a seamless, fault-tolerant LLM cascade to ensure triage never halts:
+1. **Primary:** Gemini 2.5 Pro
+2. **Secondary:** Gemini 2.5 Flash
+3. **Tertiary (Air-Gapped Fallback):** Local Models (e.g., Llama3 via Ollama)
 
--   `YOMI_AIR_GAPPED_MODE=true`
+If the external network connection is severed, Yomi will automatically experience a timeout on the primary/secondary calls and seamlessly cascade to the local model. 
 
--   `YOMI_LOCAL_LLM_URL` points to a local endpoint (such as Ollama or Llama.cpp)
+**Performance Optimization (Zero-Latency Override):** If operating in a known zero-connectivity environment, you can proactively set `export YOMI_AIR_GAPPED_MODE=true`. This acts as an immediate architectural circuit breaker, bypassing the 25-second external API timeout delays and routing tactical analysis directly to the local hardware in 0 milliseconds.
 
-### 4. Kernel Detection-to-Decision Flow
+### 4. Detection-to-Decision Cascade Flow
 
 ```text
-[KERNEL] eBPF detects unauthorized activity --> SIGSTOP immediately on PID
+[SWARM / SENTINEL] Patrol detects anomalous Socket/Memory artifacts
 |
 v
-[MCP] Local data extraction / JSON summary
+[TRIAD COUNCIL LLM] Evaluates context. Is Epistemic Doubt > 40%?
 |
-v
-[Local LLM] Context & indication evaluation
+v (Yes, Escalate)
+[SHADOW NET] eBPF injected into Kernel. Polls sys_enter_execve / sys_enter_openat
 |
-v
-[Triad Council] Decision: leave / isolate / delete
-
+v (Malicious Syscall Verified)
+[OS BRIDGE] Atomic OS Syscall (SIGSTOP) immediately freezes PID
 ```
 
 ## 15. Development Roadmap & Future Scope
