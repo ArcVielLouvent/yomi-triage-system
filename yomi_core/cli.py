@@ -13,7 +13,7 @@ from pathlib import Path
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from yomi_mcp.stamp import ImmutableStamp
+from yomi_audit.stamp import ImmutableStamp
 from yomi_core.sentinel import SentinelDaemon
 from yomi_core.ghost import GhostProtocol
 from yomi_data import validate_data_store, read_latest_ledger_entry
