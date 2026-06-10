@@ -207,3 +207,28 @@ marimo/_lsp/
 __marimo__/
 __pycache__/
 *.pyc
+
+# Python Artifacts
+__pycache__/
+*.py[cod]
+*~
+
+# Yomi Confidential State Data
+yomi_data/audit_hmac.key
+yomi_data/*.jsonl
+yomi_data/cve_store/*.json
+yomi_data/cve_store/*.xz
+yomi_data/*.migrated
+yomi_data/reports/*.pdf
+yomi_data/reports/*.asc
+yomi_data/lazarus_chamber/*
+yomi_data/recovery/*
+yomi_data/locks/*
+
+# Ignore config (if API keys are stored here)
+config.json
+.env
+
+# Allow keep files to maintain directory structures
+!yomi_data/**/.gitkeep
+!yomi_data/remediation/remediation_plan_example.sh
