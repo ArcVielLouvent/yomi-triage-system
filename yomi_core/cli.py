@@ -7,12 +7,13 @@ import shlex
 import sys
 import threading
 import time
+import signal
 from pathlib import Path
 
 # Append root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from yomi_audit.stamp import ImmutableStamp
+from yomi_mcp.stamp import ImmutableStamp
 from yomi_core.sentinel import SentinelDaemon
 from yomi_core.ghost import GhostProtocol
 from yomi_data import validate_data_store, read_latest_ledger_entry
@@ -23,10 +24,14 @@ except ImportError:  # pragma: no cover
     Live = None
 
 # ==============================================================================
-# YOMI TRIAGE SYSTEM: Phase 6.2 - The Final Wrap (CLI Entry Point)
+# YOMI TRIAGE SYSTEM: Phase 9.0 - The Ultimate Conductor (CLI Entry Point)
 # Purpose: The absolute command center. Handles Air-Gapped execution,
 #          Boot Persistence (Startup), and TUI/Sentinel Threading.
-# ============================================================================
+#          - Systemd SIGTERM Handler: Graceful shutdown under systemctl stop.
+#          - Atomic Rollback Shield: Aborts unmonitored process camouflage states.
+#          - Zero Ledger I/O Overhead: Implements os.stat tracking inside TUI loop.
+#          - TOCTOU & Injection Shield: Strict umask locking and newline removal.
+# ==============================================================================
 
 logger = logging.getLogger("yomi.cli")
 if not logger.handlers:
@@ -36,6 +41,23 @@ if not logger.handlers:
     )
     logger.addHandler(console_handler)
 logger.setLevel(logging.INFO)
+
+# Global Shutdown Event Bridge for SIGTERM Handling
+_global_shutdown_event = threading.Event()
+
+
+def _signal_shutdown_bridge(signum, frame):
+    """Intercepts kernel SIGTERM/SIGINT signals to orchestrate safe state serialization."""
+    logger.info(
+        "Kernel interception: Received signal %s. Initiating atomic cleanup.",
+        signal.Signals(signum).name,
+    )
+    _global_shutdown_event.set()
+
+
+# Bind operational OS signals immediately upon bootstrap
+signal.signal(signal.SIGTERM, _signal_shutdown_bridge)
+signal.signal(signal.SIGINT, _signal_shutdown_bridge)
 
 
 class DataSecurityError(Exception):
@@ -123,26 +145,40 @@ def install_persistence() -> None:
 
     script_path = Path(sys.argv[0]).resolve()
     if not script_path.exists():
-        logger.error("Unable to resolve CLI entrypoint path for persistence installation.")
+        logger.error(
+            "Unable to resolve CLI entrypoint path for persistence installation."
+        )
         return
 
     if os_name == "Linux":
         service_file = Path.cwd() / "yomi-triage.service"
+
+        # Configuration Newline Injection Shield
+        safe_exe = str(sys.executable).replace("\n", "").replace("\r", "")
+        safe_script = str(script_path).replace("\n", "").replace("\r", "")
+
         service_payload = (
             f"[Unit]\n"
             f"Description=Yomi Autonomous DFIR Engine\n"
             f"After=network.target\n\n"
             f"[Service]\n"
             f"Type=simple\n"
-            f"ExecStart={shlex.quote(sys.executable)} {shlex.quote(str(script_path))} --auto --headless\n"
+            f"ExecStart={shlex.quote(safe_exe)} {shlex.quote(safe_script)} --auto --headless\n"
             f"Restart=always\n"
             f"RestartSec=3\n"
             f"User=root\n\n"
             f"[Install]\n"
             f"WantedBy=multi-user.target\n"
         )
-        service_file.write_text(service_payload, encoding="utf-8")
-        _secure_path(service_file, 0o600)
+
+        # TOCTOU Race Condition Immunity via Local Atomic Umask
+        old_umask = os.umask(0o077)
+        try:
+            with open(service_file, "w", encoding="utf-8") as f:
+                f.write(service_payload)
+        finally:
+            os.umask(old_umask)
+
         logger.info(
             "Persistence artifact created: %s. Move to /etc/systemd/system/ as root.",
             service_file,
@@ -157,12 +193,15 @@ def install_persistence() -> None:
                 0,
                 winreg.KEY_SET_VALUE,
             )
+            safe_exe = str(sys.executable).replace("\n", "").replace("\r", "")
+            safe_script = str(script_path).replace("\n", "").replace("\r", "")
+
             winreg.SetValueEx(
                 key,
                 "YomiTriageSystem",
                 0,
                 winreg.REG_SZ,
-                f'"{sys.executable}" "{script_path}" --auto --headless',
+                f'"{safe_exe}" "{safe_script}" --auto --headless',
             )
             winreg.CloseKey(key)
             logger.info("Windows persistence successfully configured in registry.")
@@ -235,10 +274,13 @@ def _prepare_runtime_environment() -> ImmutableStamp:
     return audit
 
 
-def _run_sentinel_daemon(audit: ImmutableStamp) -> threading.Thread:
+def _run_sentinel_daemon(audit: ImmutableStamp) -> SentinelDaemon:
+    sentinel = SentinelDaemon()
+
     def _daemon_worker() -> None:
-        sentinel = SentinelDaemon()
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(
+            devnull
+        ), contextlib.redirect_stderr(devnull):
             sentinel.start()
 
     thread = threading.Thread(target=_daemon_worker, daemon=True)
@@ -250,7 +292,7 @@ def _run_sentinel_daemon(audit: ImmutableStamp) -> threading.Thread:
         metadata={"daemon": "Sentinel"},
     )
     logger.info("Sentinel daemon started in background.")
-    return thread
+    return sentinel
 
 
 def _get_latest_ledger_log() -> dict | None:
@@ -260,40 +302,55 @@ def _get_latest_ledger_log() -> dict | None:
     return latest
 
 
-def _run_console_loop(audit: ImmutableStamp) -> None:
+def _run_console_loop(audit: ImmutableStamp, ledger_file: str) -> None:
     _record_audit_event(
         audit,
         "UI_FALLBACK",
         "Falling back to console gateway because dashboard UI is unavailable.",
     )
     last_hash = ""
-    try:
-        while True:
-            latest_entry = _get_latest_ledger_log()
-            if latest_entry is not None:
-                current_hash = latest_entry.get("hash", "")
-                if current_hash and current_hash != last_hash:
-                    last_hash = current_hash
-                    action_name = latest_entry.get("action_type", "SYSTEM_UPDATE")
-                    description = latest_entry.get("description", "")
-                    logger.info("Ledger update detected: %s - %s", action_name, description)
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        logger.info("Console gateway closed by operator. Background Sentinel may continue.")
-        _record_audit_event(audit, "SHUTDOWN", "CLI console gateway received keyboard interrupt.")
+    last_ledger_size = -1
+    ledger_path = Path(ledger_file)
+
+    while not _global_shutdown_event.is_set():
+        if ledger_path.exists():
+            try:
+                # Console-level os.stat VFS optimization
+                current_size = ledger_path.stat().st_size
+                if current_size != last_ledger_size:
+                    latest_entry = _get_latest_ledger_log()
+                    last_ledger_size = current_size
+
+                    if latest_entry is not None:
+                        current_hash = latest_entry.get("hash", "")
+                        if current_hash and current_hash != last_hash:
+                            last_hash = current_hash
+                            action_name = latest_entry.get(
+                                "action_type", "SYSTEM_UPDATE"
+                            )
+                            description = latest_entry.get("description", "")
+                            logger.info(
+                                "Ledger update detected: %s - %s",
+                                action_name,
+                                description,
+                            )
+            except OSError:
+                pass
+        _global_shutdown_event.wait(1.0)
 
 
-def _run_tui_loop(audit: ImmutableStamp) -> None:
+def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
     if Live is None:
         logger.warning("Rich runtime is unavailable. Using fallback console gateway.")
-        _run_console_loop(audit)
+        _run_console_loop(audit, ledger_file)
         return
 
     try:
         from yomi_core.dashboard import YomiDashboard
     except ImportError as exc:
         logger.warning(
-            "Dashboard UI module unavailable (%s); falling back to console gateway.", exc
+            "Dashboard UI module unavailable (%s); falling back to console gateway.",
+            exc,
         )
         _record_audit_event(
             audit,
@@ -301,43 +358,70 @@ def _run_tui_loop(audit: ImmutableStamp) -> None:
             "Dashboard UI module not available; using console gateway.",
             metadata={"reason": str(exc)},
         )
-        _run_console_loop(audit)
+        _run_console_loop(audit, ledger_file)
         return
 
     _record_audit_event(audit, "UI_START", "Launching dashboard UI gateway.")
     tui = YomiDashboard()
     last_hash = ""
+    last_ledger_size = -1
+    ledger_path = Path(ledger_file)
 
     try:
         with Live(tui.render_layout(), refresh_per_second=4, screen=True) as live:
-            while True:
-                latest_entry = _get_latest_ledger_log()
-                if latest_entry is not None:
-                    current_hash = latest_entry.get("hash", "")
-                    if current_hash and current_hash != last_hash:
-                        last_hash = current_hash
-                        action_name = latest_entry.get("action_type", "SYSTEM_UPDATE")
-                        description = latest_entry.get("description", "")
+            while not _global_shutdown_event.is_set():
+                if ledger_path.exists():
+                    try:
+                        # TUI-level os.stat VFS optimization
+                        # Prevents non-atomic file reads from freezing the UI thread under high disk pressure
+                        current_size = ledger_path.stat().st_size
+                        if current_size != last_ledger_size:
+                            latest_entry = _get_latest_ledger_log()
+                            last_ledger_size = current_size
 
-                        status = "SAFE"
-                        if "FREEZE" in action_name or "CRITICAL" in description:
-                            status = "CRITICAL"
-                        elif "SHADOW" in action_name or "MIRAGE" in description:
-                            status = "DECEPTION"
-                        elif "DOUBT" in action_name or "ANOMALY" in action_name:
-                            status = "WARNING"
+                            if latest_entry is not None:
+                                current_hash = latest_entry.get("hash", "")
+                                if current_hash and current_hash != last_hash:
+                                    last_hash = current_hash
+                                    action_name = latest_entry.get(
+                                        "action_type", "SYSTEM_UPDATE"
+                                    )
+                                    description = latest_entry.get("description", "")
 
-                        tui.update_state(status, "AUTO", f"[{action_name}] {description}")
-                        live.update(tui.render_layout())
-                time.sleep(0.5)
-    except KeyboardInterrupt:
-        logger.info("Obsidian Torii Gateway closed by operator. Background Sentinel may continue.")
-        _record_audit_event(audit, "SHUTDOWN", "CLI dashboard gateway shut down by keyboard interrupt.")
+                                    status = "SAFE"
+                                    if (
+                                        "FREEZE" in action_name
+                                        or "CRITICAL" in description
+                                    ):
+                                        status = "CRITICAL"
+                                    elif (
+                                        "SHADOW" in action_name
+                                        or "MIRAGE" in description
+                                    ):
+                                        status = "DECEPTION"
+                                    elif (
+                                        "DOUBT" in action_name
+                                        or "ANOMALY" in action_name
+                                    ):
+                                        status = "WARNING"
+
+                                    tui.update_state(
+                                        status, "AUTO", f"[{action_name}] {description}"
+                                    )
+                                    live.update(tui.render_layout())
+                    except OSError:
+                        pass
+                _global_shutdown_event.wait(0.5)
+    finally:
+        # Guaranteed thread teardown upon termination signals
+        tui.stop()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Yomi Triage System - Autonomous DFIR")
-    parser.add_argument("--auto", action="store_true", help="Launch full autonomous triage mode")
+    parser.add_argument(
+        "--auto", action="store_true", help="Launch full autonomous triage mode"
+    )
     parser.add_argument(
         "--install",
         action="store_true",
@@ -362,36 +446,74 @@ def main() -> None:
 
     if args.auto:
         audit = _prepare_runtime_environment()
-        if os.environ.get("YOMI_ENABLE_GHOST_PROTOCOL", "false").lower() in ("1", "true", "yes"):
+        ledger_file_path = validate_data_store()["ledger_file"]
+
+        # Deploy Ghost Protocol
+        if os.environ.get("YOMI_ENABLE_GHOST_PROTOCOL", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
             try:
                 ghost = GhostProtocol()
                 ghost.engage_camouflage()
-                _record_audit_event(audit, "GHOST_PROTOCOL", "GhostProtocol engaged camouflage.")
-            except Exception as exc:
-                logger.warning("GhostProtocol failed: %s", exc)
+
+                # Arm the Anti-Tamper Watchdog Circuit
+                ghost.arm_watchdog()
                 _record_audit_event(
                     audit,
-                    "GHOST_PROTOCOL_FAILURE",
-                    "GhostProtocol camouflage failed.",
+                    "GHOST_PROTOCOL",
+                    "GhostProtocol engaged camouflage and armed watchdog.",
+                )
+            except Exception as exc:
+                # Atomic Rollback Safety Enforcement
+                # Immediately raise SystemExit to force shutdown if the watchdog cannot be armed.
+                # Prevents Yomi from maintaining an unmonitored cloaked state inside the kernel.
+                logger.critical(
+                    "Fatal: Ghost Protocol watchdog failed to arm: %s. Aborting startup.",
+                    exc,
+                )
+                _record_audit_event(
+                    audit,
+                    "GHOST_PROTOCOL_ATOMIC_ABORT",
+                    "GhostProtocol watchdog failed to arm. System aborted to prevent unmonitored cloaked state.",
                     metadata={"error": str(exc)},
                 )
+                raise SystemExit(
+                    "Fatal: Ghost Protocol armed state is corrupt. Aborted."
+                )
         else:
-            logger.info("GhostProtocol is disabled by default. Set YOMI_ENABLE_GHOST_PROTOCOL=true to enable it.")
+            logger.info(
+                "GhostProtocol is disabled by default. Set YOMI_ENABLE_GHOST_PROTOCOL=true to enable it."
+            )
 
-        _run_sentinel_daemon(audit)
-        if args.headless:
-            logger.info("Running in headless mode. CLI is now maintaining background services.")
-            try:
-                while True:
-                    time.sleep(10)
-            except KeyboardInterrupt:
-                logger.info("Headless mode interrupted by user.")
-                _record_audit_event(audit, "SHUTDOWN", "Headless mode interrupted by user.")
-                sys.exit(0)
+        # Deploy Sentinel Daemon
+        sentinel_instance = _run_sentinel_daemon(audit)
 
-        _run_tui_loop(audit)
-        _record_audit_event(audit, "SHUTDOWN", "Yomi CLI exited from interactive mode.")
-        return
+        try:
+            if args.headless:
+                logger.info("Running in headless mode. Systemd Event Loop engaged.")
+                # Systemd Non-Blocking Interruptible Event Loop
+                # Replaced while True with _global_shutdown_event to guarantee response to SIGTERM
+                while not _global_shutdown_event.is_set():
+                    _global_shutdown_event.wait(10.0)
+            else:
+                _run_tui_loop(audit, ledger_file_path)
+        finally:
+            logger.info(
+                "Initiating structural cleanup sequence for Yomi Core services."
+            )
+            # Graceful Sentinel Decapitation Framework
+            if sentinel_instance:
+                sentinel_instance.is_running = False
+                sentinel_instance._wake_event.set()
+
+            _record_audit_event(
+                audit,
+                "SHUTDOWN",
+                "Yomi CLI gracefully exited and successfully synchronized audit ledger trails.",
+            )
+            sys.exit(0)
 
     parser.print_help()
 
