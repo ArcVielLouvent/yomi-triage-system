@@ -70,7 +70,7 @@ Unlike typical LLM agent wrappers, Yomi's MCP Vault was engineered specifically 
 | Adversarial Tactic / Tool Failure | The Yomi MCP Server Mitigation (v11.0) |
 | :--- | :--- |
 | **Command Injection (RCE)** | **Absolute Regex Sealing.** Eradicates shell chaining `[;&\|$<>]` while preserving literal quotes for YARA/Regex syntax evaluation. |
-| **Flag Injection Evasion** | **Literal Option Barriers.** Injects `--` before dynamic arguments, preventing malware named `-v` or `-p` from being parsed as CLI tool options by `grep` or `yara`. |
+| **Flag Injection Evasion** | **Literal Option Barriers.** Injects `--` before dynamic arguments, preventing malware named `-v` or `-p` from being parsed as CLI tool options by `grep`, `yara`, `ssdeep`, and `radare2`. |
 | **Thread Exhaustion DoS** | **Atomic Load Shedding.** Global Thread Pool capped at 5 workers. Incoming requests beyond capacity are instantly vetoed (0s latency), preventing server queue freezing. |
 | **I/O Blocking Deadlocks** | **Non-Blocking OS Descriptors.** Pipes utilize `fcntl.O_NONBLOCK`. If a C-binary hangs without closing its buffer, Yomi safely reads partial bytes without locking the main execution thread. |
 | **Zombie Process CPU Starvation** | **Process Group Annihilation.** Forensic tools are launched with `start_new_session=True`. On timeout, `os.killpg()` atomically destroys the tool and all runaway child processes. |
@@ -81,7 +81,7 @@ Unlike typical LLM agent wrappers, Yomi's MCP Vault was engineered specifically 
 
 Designed to fulfill SANS's **"Purpose-Built MCP Server"** and **"Direct Agent Extension"** architectural tracks, Yomi delivers production-grade defense:
 
-* **Zero Evidence Spoliation (Type-Safe MCP Server):** The AI physically cannot run destructive commands. Tools are exposed as typed, structured functions (`run_volatility_netscan`, `run_plaso_timeline`). The MCP server handles raw tool output natively and parses it *before* returning it to the LLM, preventing context window overload.
+* **Zero Evidence Spoliation (Type-Safe MCP Server):** The AI physically cannot run destructive commands. Tools are exposed as typed, structured functions (`run_volatility_netscan`, `run_plaso_timeline`). The MCP server wraps execution in Process Group Isolation (`os.killpg`) and Non-Blocking OS pipes (`fcntl.O_NONBLOCK`) to handle raw C-binary output natively, preventing server deadlocks, zombie process starvation, and context window overload.
 * **Epistemic Doubt & ReAct Self-Correction:** Yomi's "Triad Council" utilizes an epistemic doubt threshold. If the LLM's uncertainty exceeds 40%, it vetoes the containment action and triggers autonomous self-correction or escalates to deeper forensic hunts (e.g., eBPF Kernel Tracing or TSK filesystem analysis).
 * **Air-Gapped Resilient Engine:** Yomi does not strictly rely on cloud API connectivity. If Gemini credentials are unavailable or the host is network-isolated, Yomi's Circuit Breaker seamlessly falls back to Local On-Premise LLMs (Llama3 via Ollama) and continues triage without internet access.
 * **Anti-Spoliation Chain of Custody:** Every autonomous decision and tool execution is mathematically hashed (HMAC-SHA256) and sealed in an append-only JSONL cryptographic ledger (`stamp.py`), ensuring court admissibility.
@@ -437,6 +437,8 @@ Yomi executes forensic workflows magnitudes faster than human analysts. Below is
 
 - **LLM Hallucination & Command Injection (RCE):** Yomi treats the LLM purely as an untrusted inference engine. The custom MCP Server implements an impenetrable regex shield `(\$\(|`|\||;|&&|\|\||>)` to eradicate Shell Chaining/Subshell attacks, while safely preserving quoting for YARA/Regex execution.
 
+- **Flag Injection Evasion (Anti-Forensic Defense):** Malware authors often name malicious files with leading hyphens (e.g., `-p` or `--help`) to trick DFIR tools into parsing them as operational flags, causing tool crashes or false negatives. Yomi's SIFT wrapper autonomously injects strict end-of-options literal barriers (`--`) into `grep`, `yara`, `ssdeep`, and `radare2`, ensuring arbitrary malicious filenames are always evaluated safely as literal string targets.
+
 - **Forensic Denial of Service (F-DoS) & Thread Exhaustion:** To prevent an adversary from spamming heavy forensic tools to exhaust the server's RAM, Yomi deploys an Atomic Load Shedding Gatekeeper. It caps the Global Thread Pool at 5 workers. Incoming requests beyond this limit are instantly vetoed (0s latency). Critical containment signals (`run_cryogenic_freeze`) operate on a VVIP OS Track, bypassing the thread pool entirely for guaranteed microsecond execution.
 
 - **Context Exhaustion Protection (Context Shield):** When tools like `strings_grep` output gigabytes of text, the SIFT Toolkit buffers via Non-Blocking OS pipes (`fcntl.O_NONBLOCK`) and strictly truncates output at 100,000 characters (100KB). This ensures local, air-gapped LLMs never crash from Context Window Blowout.
@@ -486,6 +488,10 @@ v (Yes, Escalate)
 v (Malicious Syscall Verified)
 [OS BRIDGE] Atomic OS Syscall (SIGSTOP) immediately freezes PID
 ```
+
+### 5. Tool Operational Resilience (The Scalpel & C-Binary Fixes)
+
+Many legacy C-based forensic binaries possess rigid operational constraints that crash autonomous agents. For instance, `scalpel` fundamentally aborts execution if an output directory already exists. Yomi circumvents these legacy limitations via Dynamic Timestamped Execution paths (`scalpel_{unix_timestamp}`) and sequential flag coercion (forcing `-c` positioning), ensuring 100% tool operational resilience during live AI triage.
 
 ## 15. Development Roadmap & Future Scope
 
