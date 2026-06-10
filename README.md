@@ -97,7 +97,7 @@ Yomi intentionally separates the forensic ingestion layer, AI reasoning layer, a
 ```mermaid
 graph TD;
     %% Artifact Sources & Evidence Swarm
-    subgraph "Data Ingestion (The Evidence Swarm)"
+    subgraph "Data Ingestion - The Evidence Swarm"
         A1[eBPF Ring-0 Telemetry & Netlink]
         A2[Disk Images / Memory Dumps]
         A3[PCAP / Network Traffic]
@@ -115,7 +115,7 @@ graph TD;
     end
 
     %% AI Brain
-    subgraph "OpenClaw Gateway (LLM Circuit Breaker)"
+    subgraph "OpenClaw Gateway - LLM Circuit Breaker"
         E1[Gemini 2.5 Pro/Flash]
         E2[Local Llama3 Fallback]
     end
@@ -240,7 +240,6 @@ stateDiagram-v2
     }
 
     Weaver --> [*] : Terminate Lifecycle / Standby
-
 ```
 
 ## 6. Yomi Core Engines (The Arsenal)
@@ -249,11 +248,7 @@ Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advance
 
 - **The Evidence Swarm (`swarm.py`):** The central orchestrator. Hardened with **Inode Pinning (OS Hardlinks)** to completely obliterate Time-of-Check to Time-of-Use (TOCTOU) attacks. It utilizes an **Anti-OOM Context Shield (100KB Dynamic Truncation)** and bounded regex to prevent Catastrophic Backtracking (ReDoS) when ingesting massive datasets from Volatility or Plaso.
 
--   **Chronos Telemetry Engine (`telemetry.py`):** Proves the "Speed Problem" resolution. Uses a **Dual-Lock Architecture** and **O(1) Memory Eviction** to ensure zero RAM bloat during massive, multi-threaded incident tracking, delivering cryptographically signed latency benchmarks.
-
 -   **Temporal Narrative Weaver (`weaver.py`):** Generates human-readable reports from the JSONL ledger. Built with **O(1) Physical Byte-Chunk Tailing** to prevent OOM crashes on massive logs, **ANSI Stripping** to prevent terminal log forging, and highly strict MITRE ATT&CK extraction (T1000-T1699).
-
--   **The Shadow Net (`ebpf_sensor.py` & `shadow_net.py`):** Bypasses standard user-space APIs. Injects C code directly into the Linux Ring-0 Kernel via Tracepoints (`sys_enter_openat`, `sys_enter_execve`). Provides zero-overhead, un-hideable telemetry with Absolute Path Validation to defeat obfuscation. Features **Secure ELF Necromancy** to physically reconstruct fileless malware from RAM.
 
 -   **The Omni-Library (`library.py` v4.0):** An O(1) local Threat Intelligence Database. Uses In-Memory LRU Caching and Memory-Safe Streams to query NVD/CVE definitions without causing Out-of-Memory (OOM) spikes during intense triage.
 
@@ -263,9 +258,13 @@ Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advance
 
 -   **The Lazarus Chamber & Mirage Protocol (`mirage.py`):** A deep isolation sandbox. Extracted malware is awakened (`SIGCONT`) within a synthetic hallucinated environment (Honeytokens like fake `/etc/shadow`) to monitor behavioral signatures safely.
 
--   **Chronos Reverser Engine:** Automatically generates and GPG-signs verifiable bash scripts to remediate and rollback the specific changes made by the identified malware.
+-   **The Shadow Net (`ebpf_sensor.py` & `shadow_net.py`):** Bypasses standard user-space APIs. Injects C code directly into the Linux Ring-0 Kernel via Tracepoints (`sys_enter_openat`, `sys_enter_execve`). Features **Secure ELF Necromancy** to physically reconstruct fileless malware from RAM into an **Atomic Vault** (secured via `os.umask(0o077)` at the exact millisecond of creation to prevent Symlink Race Conditions).
 
--   **Ghost Protocol:** Triple camouflage. Masquerades the Yomi daemon Python process as a standard OS process (e.g., `svchost.exe` or `[kworker/u4:2]`) to evade malware anti-analysis checks.
+-   **Aegis Reverser Engine (`remediator.py`):** Automatically generates and GPG-signs verifiable bash scripts to rollback changes made by malware. Hardened against Bash Comment Injection (newline stripping) and enforces strict military-grade triage ordering (`SIGSTOP -> DUMP -> SIGKILL`) to prevent fileless malware from evading containment during remediation.
+
+-   **Ghost Process Evasion & Bitness Mismatch:** Malware often terminates rapidly to force EDRs to target recycled PIDs (Ghost Processes). Yomi's `os_bridge.py` eliminates TOCTOU gaps by relying purely on Atomic OS exception handling (`ProcessLookupError`) instead of user-space polling. On Windows environments, it implements a reduced-privilege footprint (`0x0800`) to guarantee execution stability across Wow64 32/64-bit boundaries without triggering Access Denied violations.
+
+-   **The Aegis Harness (`harness.py`):** The Zero-Trust Policy Gatekeeper. Before any OS-level intervention (freeze/thaw) is routed to the Kernel, the Harness validates it. Built with **Kernel Thread Immunity** (safeguarding intangible OS structures without `exe_path` limits) and **Realpath Pinning** to utterly defeat Process Name Spoofing and Symlink Path Hijacking.
 
 -   **Obsidian Torii Gateway:** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`, providing an enterprise-grade command center for operators to monitor the AI's thought process.
 
