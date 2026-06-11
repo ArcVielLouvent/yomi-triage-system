@@ -107,31 +107,31 @@ graph TD;
 
     %% Yomi Hardware Abstraction
     subgraph "Yomi Core Execution Bridge"
-        B[OSBridge / Tool Discovery]
-        LS[Load Shedding Gatekeeper]
+        B[The Aegis Harness / OSBridge]
+        LS[Atomic Load Shedding Gatekeeper]
         VVIP[VVIP OS Routing: Zero-Latency]
         C[SiftArsenal: Global Thread Pool]
         S[Anti-ReDoS & 100KB Context Shield]
     end
 
     %% AI Brain
-    subgraph "OpenClaw Gateway - LLM Circuit Breaker"
+    subgraph "OpenClaw Gateway - LLM Cascade"
         E1[Gemini 2.5 Pro/Flash]
-        E2[Local Llama3 Fallback]
+        E2[Local Llama3 Fallback (Air-Gapped)]
     end
 
     %% Triage & Action
     subgraph "Tactical Orchestration"
-        F[Yomi Router / Triad Council]
+        F[Triad Council / Epistemic Doubt]
         G[Shadow Net: Ring-0 eBPF & ELF Necromancy]
-        I[Remediator & Containment]
+        I[Aegis Remediator & Containment]
     end
 
-    %% Audit & Reporting
-    subgraph "Forensic Audit Trail"
+    %% Audit & Reporting (The OMNISCIENT Update)
+    subgraph "Forensic Audit & C2 Center"
         H[(HMAC-SHA256 Cryptographic Ledger)]
-        W[Temporal Narrative Weaver]
-        T[Dual-Lock Telemetry Benchmarker]
+        W[Dossier: GPG Signed Temporal Narrative]
+        T[OMNISCIENT TUI: VFS Zero-Overhead Poller]
     end
 
     %% Data Flow
@@ -141,14 +141,14 @@ graph TD;
     LS -- "Forensic Tools (If Pool < 5)" --> C
     VVIP & C -- "Outputs" --> S
     S -- "Masked Tokens & Safe Context" --> E1
-    E1 -- "Rate Limit / Offline" --> E2
+    E1 -- "Timeout / Network Loss" --> E2
     E1 & E2 --> F
     F -- "If Doubt < 40%" --> I
     F -- "If Doubt > 40% (Escalate)" --> G
-    G -- "RAM Binary Extraction" --> I
+    G -- "Atomic Umask Vault" --> I
     I & F --> T
     I & G --> H
-    H -- "O(1) Physical Byte-Chunk Tailing" --> W
+    H -- "O(1) File Stat Hook" --> W
 ```
 
 ### 4.2 MCP Tool Execution & Anti-Spoliation Data Flow
@@ -163,10 +163,10 @@ sequenceDiagram;
     participant Vault as MCP Vault (Load Shedding)
     participant SIFT as SIFT Toolkit (C-Binaries)
 
-    LLM->>Swarm: Request execution (e.g., run_volatility_netscan)
+    LLM->>Swarm: Request execution (e.g., run_scalpel)
     Swarm->>Vault: Dynamic Argument Validation
     
-    alt Command Injection or Boundary Violation
+    alt Command Injection, Flag Evasion, or Boundary Violation
         Vault-->>LLM: VETO: Path traversal or shell operator detected
     end
 
@@ -195,11 +195,11 @@ To understand how Yomi's Python modules interact dynamically during an active in
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SwarmDeploy : Initialize Evidence Swarm (OSBridge)
+    [*] --> SwarmDeploy : Systemd Boot / CLI Exec
 
     state "Observation & Telemetry" as Observation {
         state "Pin Inodes / Secure Files" as InodeLock
-        state "Network/RAM Sweeps (Max 2MB)" as Sweep
+        state "Network/RAM Sweeps" as Sweep
         state "Start Dual-Lock Timer" as Timer
 
         SwarmDeploy --> InodeLock
@@ -218,9 +218,9 @@ stateDiagram-v2
     }
 
     state "Containment & Forensics Layer" as Action {
-        state "SIGSTOP / Neutralize" as Remediate
-        state "Shadow Net eBPF (PID Start-Time Check)" as ShadowNet
-        state "ELF Necromancy (RAM Recovery)" as Necromancy
+        state "SIGSTOP / Aegis Harness" as Remediate
+        state "Shadow Net eBPF (Ring-0)" as ShadowNet
+        state "Atomic ELF Necromancy" as Necromancy
 
         DoubtCheck --> Remediate : Doubt < 40%
         DoubtCheck --> ShadowNet : Doubt > 40%
@@ -229,44 +229,54 @@ stateDiagram-v2
     }
 
     state "Audit & Reporting Layer" as Audit {
-        state "stamp.py (Hash Ledger)" as Stamp
-        state "weaver.py (Procedural Narrative)" as Weaver
-        state "Stop Timer (Calculate Latency)" as TimerStop
+        state "stamp.py (HMAC-SHA256 Ledger)" as Stamp
+        state "dossier.py (GPG PDF/TXT Export)" as Dossier
+        state "Stop Timer (TTC Benchmark)" as TimerStop
 
         Remediate --> Stamp
         Necromancy --> Stamp
         Stamp --> TimerStop
-        TimerStop --> Weaver
+        TimerStop --> Dossier
+    }
+    
+    state "Graceful Shutdown" as Shutdown {
+        state "Systemd SIGTERM Catch" as Sigterm
+        state "Atomic Rollback (Ghost Protocol)" as Rollback
     }
 
-    Weaver --> [*] : Terminate Lifecycle / Standby
+    Dossier --> [*] : Terminate Lifecycle / Standby
+    Observation --> Sigterm
+    Sigterm --> Rollback
+    Rollback --> [*]
 ```
 
 ## 6. Yomi Core Engines (The Arsenal)
 
 Beyond standard MCP Wrappers, Yomi implements several deeply integrated, advanced DFIR subsystems to outmaneuver modern malware:
 
-- **The Evidence Swarm (`swarm.py`):** The central orchestrator. Hardened with **Inode Pinning (OS Hardlinks)** to completely obliterate Time-of-Check to Time-of-Use (TOCTOU) attacks. It utilizes an **Anti-OOM Context Shield (100KB Dynamic Truncation)** and bounded regex to prevent Catastrophic Backtracking (ReDoS) when ingesting massive datasets from Volatility or Plaso.
+- **The Evidence Swarm (`swarm.py`):** The central orchestrator. Hardened with **Inode Pinning (OS Hardlinks)** to completely obliterate Time-of-Check to Time-of-Use (TOCTOU) attacks. It utilizes an **Anti-OOM Context Shield (100KB Dynamic Truncation)** and bounded regex to prevent Catastrophic Backtracking (ReDoS) when ingesting massive datasets.
 
--   **Temporal Narrative Weaver (`weaver.py`):** Generates human-readable reports from the JSONL ledger. Built with **O(1) Physical Byte-Chunk Tailing** to prevent OOM crashes on massive logs, **ANSI Stripping** to prevent terminal log forging, and highly strict MITRE ATT&CK extraction (T1000-T1699).
+- **The Aegis Harness (`harness.py`):** The Zero-Trust Policy Gatekeeper. Before any OS-level intervention (freeze/thaw) is routed to the Kernel, the Harness validates it. Built with **Kernel Thread Immunity** (safeguarding intangible OS structures without `exe_path` limits) and **Realpath Pinning** to utterly defeat Process Name Spoofing and Symlink Path Hijacking.
 
--   **The Omni-Library (`library.py` v4.0):** An O(1) local Threat Intelligence Database. Uses In-Memory LRU Caching and Memory-Safe Streams to query NVD/CVE definitions without causing Out-of-Memory (OOM) spikes during intense triage.
+- **Chronos Telemetry Engine (`telemetry.py`):** Proves the "Speed Problem" resolution. Uses a **Dual-Lock Architecture** and **O(1) Memory Eviction** to ensure zero RAM bloat during massive, multi-threaded incident tracking, delivering cryptographically signed latency benchmarks.
 
--   **OmniVector Root-Cause Hunter (`hunter.py`):** Traces "Patient Zero" by correlating Volatility memory artifacts with Plaso super-timelines and TSK deleted file recoveries, utilizing strict word-boundary Regex.
+- **Court-Ready Dual-Artifact Dossiers (`dossier.py` & `weaver.py`):** Procedurally generates human-readable forensic timelines mapped to MITRE ATT&CK. Automatically compiles into PDF/TXT annexes and dynamically interfaces with the host's GPG binaries to apply detached cryptographic signatures (`.asc`) for absolute legal admissibility.
 
--   **Mind-Reader Decompiler (`mind_reader.py`):** Autonomously executes Radare2 against frozen malware to extract Assembly logic and feeds it to the OpenClaw LLM for psychological threat actor profiling. Built with a **Native Python Extraction Fallback**: if Radare2 fails or is unavailable, it gracefully degrades to a native 1MB binary string extraction to ensure the LLM never loses actionable artifacts.
+- **The Omni-Library (`library.py` v4.0):** An O(1) local Threat Intelligence Database. Uses In-Memory LRU Caching and Memory-Safe Streams to query NVD/CVE definitions without causing Out-of-Memory (OOM) spikes during intense triage.
 
--   **The Lazarus Chamber & Mirage Protocol (`mirage.py`):** A deep isolation sandbox. Extracted malware is awakened (`SIGCONT`) within a synthetic hallucinated environment (Honeytokens like fake `/etc/shadow`) to monitor behavioral signatures safely.
+- **OmniVector Root-Cause Hunter (`hunter.py`):** Traces "Patient Zero" by correlating Volatility memory artifacts with Plaso super-timelines and TSK deleted file recoveries, utilizing strict word-boundary Regex.
 
--   **The Shadow Net (`ebpf_sensor.py` & `shadow_net.py`):** Bypasses standard user-space APIs. Injects C code directly into the Linux Ring-0 Kernel via Tracepoints (`sys_enter_openat`, `sys_enter_execve`). Features **Secure ELF Necromancy** to physically reconstruct fileless malware from RAM into an **Atomic Vault** (secured via `os.umask(0o077)` at the exact millisecond of creation to prevent Symlink Race Conditions).
+- **Mind-Reader Decompiler (`mind_reader.py`):** Autonomously executes Radare2 against frozen malware to extract Assembly logic. Built with a **Native Python Extraction Fallback**: if Radare2 fails or is unavailable on the judge's VM, it gracefully degrades to a native 1MB binary string extraction to ensure the LLM never loses actionable artifacts.
 
--   **Aegis Reverser Engine (`remediator.py`):** Automatically generates and GPG-signs verifiable bash scripts to rollback changes made by malware. Hardened against Bash Comment Injection (newline stripping) and enforces strict military-grade triage ordering (`SIGSTOP -> DUMP -> SIGKILL`) to prevent fileless malware from evading containment during remediation.
+- **The Lazarus Chamber & Mirage Protocol (`mirage.py` & `sandbox.py`):** A deep isolation sandbox. Extracted malware is awakened (`SIGCONT`) within a synthetic hallucinated environment. Built with an Autonomous Orphan Sweeper to prevent storage bloat.
 
--   **Ghost Process Evasion & Bitness Mismatch:** Malware often terminates rapidly to force EDRs to target recycled PIDs (Ghost Processes). Yomi's `os_bridge.py` eliminates TOCTOU gaps by relying purely on Atomic OS exception handling (`ProcessLookupError`) instead of user-space polling. On Windows environments, it implements a reduced-privilege footprint (`0x0800`) to guarantee execution stability across Wow64 32/64-bit boundaries without triggering Access Denied violations.
+- **The Shadow Net (`ebpf_sensor.py` & `shadow_net.py`):** Injects C code directly into the Linux Ring-0 Kernel via Tracepoints. Features **Secure ELF Necromancy** to physically reconstruct fileless malware from RAM into an **Atomic Vault** (secured via `os.umask(0o077)` at the exact millisecond of creation to prevent Symlink Race Conditions).
 
--   **The Aegis Harness (`harness.py`):** The Zero-Trust Policy Gatekeeper. Before any OS-level intervention (freeze/thaw) is routed to the Kernel, the Harness validates it. Built with **Kernel Thread Immunity** (safeguarding intangible OS structures without `exe_path` limits) and **Realpath Pinning** to utterly defeat Process Name Spoofing and Symlink Path Hijacking.
+- **Aegis Reverser Engine (`remediator.py`):** Automatically generates and GPG-signs verifiable bash scripts to rollback changes made by malware. Hardened against Bash Comment Injection (newline stripping) and enforces strict military-grade triage ordering (`SIGSTOP -> DUMP -> SIGKILL`).
 
--   **Obsidian Torii Gateway:** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`, providing an enterprise-grade command center for operators to monitor the AI's thought process.
+- **Ghost Protocol (`ghost.py`):** Deep OS Camouflage. Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., `[kworker/u4:2]`). Armed with an autonomous **Dead Man's Switch (Watchdog)** that seals a final cryptographic log if malware successfully issues a kill signal to the EDR.
+
+- **The OMNISCIENT Torii Gateway (`dashboard.py` v10.0):** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`. Hardened against Terminal Spoofing, Lock Starvation, and VFS I/O Lag.
 
 ## 7. Security & Compliance Framework
 
@@ -292,13 +302,11 @@ Yomi is built with enterprise audit standards to ensure forensic integrity durin
 
 -   **Python:** 3.10+
 
-- **System Dependencies & Clarification:**
-
-    - `psutil`: Used for baseline host telemetry (CPU/RAM) and as a **Live Socket Polling fallback** to detect C2 beacons when PCAP data is unavailable. Yomi **does not** use `psutil` for process control.
-
+- **System Dependencies & Compilation Clarification:**
+    - Yomi relies on strictly version-pinned packages (`==`) to prevent Dependency Confusion supply chain attacks.
+    - `psutil` and `setproctitle` require C-extension compilation. In strict Air-Gapped SIFT environments lacking `gcc`, it is highly recommended to install the OS-level headers first: `sudo apt-get install python3-psutil python3-setproctitle`.
     - *Process Manipulation:* Handled natively and atomically via OS-level signals (`SIGSTOP`, `SIGCONT`, `kill -9`).
-
-    - *Deep Kernel Monitoring:* Handled via **eBPF (bcc)** in the kernel space for escalated threat verification.
+    - *Deep Kernel Monitoring:* Handled via **eBPF (bcc)** in the kernel space (`sudo apt-get install bpfcc-tools linux-headers-$(uname -r) python3-bpfcc`). Do NOT install `bcc` via pip.
 
 -   **SIFT Toolchain Dependencies (Must be in PATH):**
 
@@ -352,10 +360,8 @@ Yomi uses a centralized CLI entry point (`cli.py`) to manage its various daemons
 sudo python3 yomi_core/cli.py --auto
 ```
 
-**2. Launch with Ghost Protocol (Deep OS Camouflage):
-
-Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., [kworker/u4:2]).
-
+**2. Launch with Ghost Protocol (Deep OS Camouflage & Dead Man's Switch):**
+Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., `[kworker/u4:2]`). If malware attempts to kill Yomi, the armed watchdog will intercept the SIGTERM and seal a final cryptographic tamper-alert log before going down.
 ```bash
 sudo YOMI_ENABLE_GHOST_PROTOCOL=true python3 yomi_core/cli.py --auto
 
@@ -386,7 +392,7 @@ flowchart TD;
     A[Anomaly Detected by Evidence Swarm] --> B{Initial Threat Score?}
     
     %% VVIP Containment Route
-    B -- CRITICAL (C2/Ransomware) --> VVIP[VVIP OS Track: Instant SIGSTOP]
+    B -- CRITICAL (C2/Ransomware) --> VVIP[The Aegis Harness: VVIP OS Track]
     VVIP --> D[Containment Achieved < 10ms]
     
     %% Forensic Analysis Route
@@ -445,6 +451,9 @@ Yomi executes forensic workflows magnitudes faster than human analysts. Below is
 
 - **Evidence Spoliation & Binary Integrity:** Tools are rigidly mapped to `READ_VAULTS` and `WRITE_VAULTS` utilizing absolute structural boundary checks (`os.path.commonpath`). Furthermore, raw artifact extractions (like TSK `icat`) are strictly written in Write-Binary (`wb`) mode, guaranteeing the structural integrity and exact cryptographic hashes of recovered malware are perfectly preserved without UTF-8 corruption.
 
+- **Flag Injection Evasion (Anti-Forensic Defense):** Malware authors often name malicious files with leading hyphens (e.g., `-p` or `--help`) to trick DFIR tools into parsing them as operational flags. Yomi autonomously injects strict end-of-options literal barriers (`--`) into tools like `grep`, `yara`, `ssdeep`, and `radare2`.
+- **Ghost Process Evasion & Bitness Mismatch:** Malware often terminates rapidly to force EDRs to target recycled PIDs (Ghost Processes). Yomi's `os_bridge.py` eliminates TOCTOU gaps by relying purely on Atomic OS exception handling (`ProcessLookupError`) instead of user-space polling.
+
 ## 14. Advanced Security Architecture Attachment
 
 ### 1. Lightweight Mini-Container Isolation
@@ -492,6 +501,17 @@ v (Malicious Syscall Verified)
 ### 5. Tool Operational Resilience (The Scalpel & C-Binary Fixes)
 
 Many legacy C-based forensic binaries possess rigid operational constraints that crash autonomous agents. For instance, `scalpel` fundamentally aborts execution if an output directory already exists. Yomi circumvents these legacy limitations via Dynamic Timestamped Execution paths (`scalpel_{unix_timestamp}`) and sequential flag coercion (forcing `-c` positioning), ensuring 100% tool operational resilience during live AI triage.
+
+### 6. Terminal Interface Resilience Framework (The OMNISCIENT Shield)
+
+The `dashboard.py` (v10.0) Terminal UI is engineered to survive extreme adversarial environments:
+- **Lock Splitting & Asynchronous Rendering:** Eliminates Lock Starvation DoS. Heavy log ingestion runs on decoupled background threads, ensuring the UI renders at 60fps even under a barrage of 10,000 logs/sec.
+- **Terminal Spoofing Immunity:** Autonomous sanitization of `\r`, `\b`, and Unicode Directional Overrides (`\u202E`) prevents malware from manipulating ANSI escape codes to hide "CRITICAL" alerts behind fake "SUCCESS" messages.
+- **Pre-Truncation ReDoS Barrier:** Log strings are hard-capped at 2,000 characters *before* entering the Regex ANSI scrubber, physically preventing Regular Expression Denial of Service (ReDoS) CPU spikes.
+- **Zero-Overhead VFS Polling:** The TUI only polls the filesystem when `os.stat().st_size` changes, eradicating the redundant disk I/O bottleneck commonly found in traditional log tailers.
+
+### 7. Systemd Graceful Termination & Atomic Rollback
+When executing in Headless mode, Yomi intercepts Kernel `SIGTERM` signals emitted by `systemctl stop`. It utilizes a globally synchronized `threading.Event()` to instantly break infinite wait loops, guaranteeing a clean Sentinel decapitation and ensuring the final `SHUTDOWN` cryptographic Chain-of-Custody log is successfully sealed to disk. Furthermore, if Ghost Protocol fails to arm its watchdog due to OS restrictions, Yomi executes an **Atomic Rollback** (`SystemExit`) to prevent the engine from operating in a highly vulnerable, unmonitored cloaked state.
 
 ## 15. Development Roadmap & Future Scope
 
