@@ -16,7 +16,7 @@ To ensure strict adherence to the "Find Evil!" submission guidelines and make ev
 | **2. Demo Video (Max 5 Min)** | ⏳ | *Pending Live Testing Phase* |
 | **3. Architecture Diagram** | ✅ | Located in [Section 4: System Architecture](#4-system-architecture--data-flow) of this README. |
 | **4. Written Project Description** | ✅ | Full narrative available on our [Devpost Submission Page](#). |
-| **5. Dataset Documentation** | ⏳ | *Pending Live Testing Phase.* (See `docs/dataset_documentation.md` for future data sources and reproducibility). |
+| **5. Dataset Documentation** | ✅ | Located in [`docs/dataset_documentation.md`](docs/dataset_documentation.md). Details SANS Egnyte Ground Truth integration, Native OS testing boundaries, and OPSEC compliance. |
 | **6. Accuracy Report** | ⏳ | *Pending Live Testing Phase.* (See `docs/accuracy_report.md` for future false positive and anti-spoliation tests). |
 | **7. Try-It-Out Instructions** | ✅ | Step-by-step SIFT deployment guide located in [Section 9: Installation & Deployment](#9-installation--deployment-guide). |
 | **8. Agent Execution Logs** | ✅ | Cryptographic traces with timestamps and token usage preserved in `yomi_data/yomi_chain_of_custody.jsonl`. |
