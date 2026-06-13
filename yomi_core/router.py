@@ -150,12 +150,16 @@ class OpenClawGateway:
             extracted = self._extract_gemini_text(parsed)
             if not extracted:
                 extracted = self._extract_json_payload(response.text)
+
+            usage = parsed.get("usageMetadata", {})
+            total_tokens = usage.get("totalTokenCount", "N/A")
+
             if extracted:
                 self.audit.record_action(
                     "OPENCLAW",
                     "LLM_QUERY",
                     f"Gemini model {model} returned candidate intent.",
-                    metadata={"backend": "gemini", "model": model},
+                    metadata={"backend": "gemini", "model": model, "token_usage": total_tokens},
                 )
                 return extracted
         except Exception as exc:
@@ -186,12 +190,16 @@ class OpenClawGateway:
             extracted = self._extract_local_text(parsed)
             if not extracted:
                 extracted = self._extract_json_payload(response.text)
+
+            usage = parsed.get("usage", {})
+            total_tokens = usage.get("total_tokens", "N/A")
+
             if extracted:
                 self.audit.record_action(
                     "OPENCLAW",
                     "LLM_QUERY",
                     f"Local model {model} returned candidate intent.",
-                    metadata={"backend": "local", "model": model},
+                    metadata={"backend": "local", "model": model, "token_usage": total_tokens},
                 )
                 return extracted
         except Exception as exc:
