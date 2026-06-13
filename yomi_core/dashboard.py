@@ -29,7 +29,7 @@ from yomi_engine.library import OmniLibrary
 
 class YomiDashboard:
     def __init__(self):
-        self.console = Console()
+        self.console = Console(file=sys.__stdout__)
         self.colors = {
             "void_black": "black",
             "ghost_white": "#F8F8FF",
