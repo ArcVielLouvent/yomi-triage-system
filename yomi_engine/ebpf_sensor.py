@@ -159,6 +159,16 @@ class eBPFSentinel:
             raw_filename = event.filename.decode("utf-8", "replace").strip()
             base_name = os.path.basename(raw_filename)
 
+            cmdline = ""
+            try:
+                with open(f"/proc/{event.pid}/cmdline", "r") as f:
+                    cmdline = f.read()
+            except:
+                pass
+
+            if "yomi" in cmdline or "volatility" in cmdline or "python" in cmdline:
+                return
+
             if event.event_type == 1:
                 if "sans_hackathon" in raw_filename or "memory_dumps" in raw_filename:
                     return
