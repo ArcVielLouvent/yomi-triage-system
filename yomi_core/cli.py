@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import signal
+import json
 from pathlib import Path
 
 # Append root directory to sys.path
@@ -295,11 +296,24 @@ def _run_sentinel_daemon(audit: ImmutableStamp) -> SentinelDaemon:
     return sentinel
 
 
-def _get_latest_ledger_log() -> dict | None:
-    latest = read_latest_ledger_entry()
-    if latest is None:
-        return None
-    return latest
+def _get_new_ledger_logs(last_hash: str) -> list[dict]:
+    ledger_path = Path(validate_data_store()["ledger_file"])
+    if not ledger_path.exists():
+        return []
+    try:
+        with open(ledger_path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        entries = [json.loads(l) for l in lines]
+        if not last_hash:
+            return [entries[-1]] if entries else []
+
+        for i, entry in enumerate(entries):
+            if entry.get("hash") == last_hash:
+                return entries[i + 1 :]
+        return [entries[-1]] if entries else []
+    except Exception:
+        return []
 
 
 def _run_console_loop(audit: ImmutableStamp, ledger_file: str) -> None:
@@ -378,10 +392,10 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                         # Prevents non-atomic file reads from freezing the UI thread under high disk pressure
                         current_size = ledger_path.stat().st_size
                         if current_size != last_ledger_size:
-                            latest_entry = _get_latest_ledger_log()
+                            new_entries = _get_new_ledger_logs(last_hash)
                             last_ledger_size = current_size
 
-                            if latest_entry is not None:
+                            for latest_entry in new_entries:
                                 current_hash = latest_entry.get("hash", "")
                                 if current_hash and current_hash != last_hash:
                                     last_hash = current_hash
@@ -407,11 +421,17 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                                     description = latest_entry.get("description", "")
 
                                     status = "SAFE"
-                                    if (
-                                        "FREEZE" in action_name
-                                        or "CRITICAL" in description.upper()
-                                        or "THREAT" in action_name
+                                    if any(
+                                        k in action_name
+                                        for k in [
+                                            "FREEZE",
+                                            "THREAT",
+                                            "CONTAINMENT",
+                                            "FAILED",
+                                        ]
                                     ):
+                                        status = "CRITICAL"
+                                    elif "CRITICAL" in description.upper():
                                         status = "CRITICAL"
                                     elif (
                                         "SHADOW" in action_name

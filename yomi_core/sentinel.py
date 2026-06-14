@@ -110,7 +110,7 @@ class SentinelDaemon:
         self.telemetry.start_timer(incident_id)
 
         # ==============================================================================
-        # [CRITICAL FIX] "SHOOT FIRST, ASK AI LATER" (Deterministic Containment)
+        # "SHOOT FIRST, ASK AI LATER" (Deterministic Containment)
         # Mem-bypass LLM sepenuhnya jika ancaman bersifat CRITICAL.
         # ==============================================================================
         instant_freeze_applied = False
@@ -139,6 +139,14 @@ class SentinelDaemon:
                 self.telemetry.stop_timer(incident_id, "INSTANT_DETERMINISTIC_FREEZE")
             except OSError as e:
                 print(f"[SENTINEL] [ERROR] Instant kernel freeze failed: {e}")
+                from yomi_audit.stamp import ImmutableStamp
+
+                ImmutableStamp().record_action(
+                    "SENTINEL",
+                    "CONTAINMENT_FAILED",
+                    f"CRITICAL THREAT: Target PID {target_pid} terminated before cryogenic freeze could engage.",
+                    metadata={"target_pid": target_pid, "error": str(e)},
+                )
 
         # ==============================================================================
         # FASE 2: DEEP HUNT & AI POST-MORTEM (Non-Time-Critical)
