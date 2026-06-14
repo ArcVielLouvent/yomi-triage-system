@@ -20,7 +20,7 @@ from yomi_engine.mitre_mapper import MitreMapper
 # YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v4.0)
 # Purpose: Event-driven sentinel with adaptive polling, real host telemetry,
 #          and direct integration into the AI triage pipeline.
-# ============================================================================== 
+# ==============================================================================
 
 
 class SentinelDaemon:
@@ -51,7 +51,11 @@ class SentinelDaemon:
 
     def _free_memory_percent(self) -> float:
         try:
-            return psutil.virtual_memory().available / psutil.virtual_memory().total * 100.0
+            return (
+                psutil.virtual_memory().available
+                / psutil.virtual_memory().total
+                * 100.0
+            )
         except FileNotFoundError:
             pass
         except Exception:
@@ -60,7 +64,10 @@ class SentinelDaemon:
 
     def _score_threat(self, anomalies: list, host_metrics: dict) -> str:
         if anomalies:
-            if any("c2" in a.lower() or "ransom" in a.lower() or "credential" in a.lower() for a in anomalies):
+            if any(
+                "c2" in a.lower() or "ransom" in a.lower() or "credential" in a.lower()
+                for a in anomalies
+            ):
                 return "CRITICAL"
             return "ESCALATED"
 
@@ -76,7 +83,13 @@ class SentinelDaemon:
                 return int(match.group(1))
         return 0
 
-    def _build_forensic_context(self, target_pid: int, anomaly_data: list, hunt_result: dict, mapped_tactics: list) -> str:
+    def _build_forensic_context(
+        self,
+        target_pid: int,
+        anomaly_data: list,
+        hunt_result: dict,
+        mapped_tactics: list,
+    ) -> str:
         return json.dumps(
             {
                 "incident_type": "autonomous_dfir",
@@ -102,13 +115,27 @@ class SentinelDaemon:
         # ==============================================================================
         instant_freeze_applied = False
         if self.threat_level == "CRITICAL" and target_pid > 0:
-            print(f"[SENTINEL] [BLOOD RED] CRITICAL THREAT DETECTED. Executing immediate SIGSTOP on PID {target_pid}...")
+            print(
+                f"[SENTINEL] [BLOOD RED] CRITICAL THREAT DETECTED. Executing immediate SIGSTOP on PID {target_pid}..."
+            )
             try:
                 import signal
+
                 os.kill(target_pid, signal.SIGSTOP)
                 instant_freeze_applied = True
-                print(f"[SENTINEL]  Time-to-Containment (TTC) achieved. Target frozen. Handing over to AI for deep triage.")
-                
+                print(
+                    f"[SENTINEL]  Time-to-Containment (TTC) achieved. Target frozen. Handing over to AI for deep triage."
+                )
+
+                from yomi_audit.stamp import ImmutableStamp
+
+                ImmutableStamp().record_action(
+                    "SENTINEL",
+                    "AUTONOMOUS_CONTAINMENT",
+                    f"CRITICAL THREAT: Executed immediate SIGSTOP cryogenic freeze on PID {target_pid}.",
+                    metadata={"target_pid": target_pid, "mitigation": "SIGSTOP"},
+                )
+
                 self.telemetry.stop_timer(incident_id, "INSTANT_DETERMINISTIC_FREEZE")
             except OSError as e:
                 print(f"[SENTINEL] [ERROR] Instant kernel freeze failed: {e}")
@@ -124,11 +151,17 @@ class SentinelDaemon:
         mapped_tactics = mapper.map_anomalies(anomaly_data)
 
         if instant_freeze_applied:
-            anomaly_data.append("SYSTEM NOTE: The target PID has already been cryogenically frozen (SIGSTOP) by the OS kernel for safety. Focus strictly on forensic profiling.")
+            anomaly_data.append(
+                "SYSTEM NOTE: The target PID has already been cryogenically frozen (SIGSTOP) by the OS kernel for safety. Focus strictly on forensic profiling."
+            )
 
-        forensic_context = self._build_forensic_context(target_pid, anomaly_data, hunt_result, mapped_tactics)
+        forensic_context = self._build_forensic_context(
+            target_pid, anomaly_data, hunt_result, mapped_tactics
+        )
 
-        print("[SENTINEL] Routing tactical MITRE context to OpenClaw LLM Gateway for Post-Mortem Analysis...")
+        print(
+            "[SENTINEL] Routing tactical MITRE context to OpenClaw LLM Gateway for Post-Mortem Analysis..."
+        )
         triage_result = self.router.execute_autonomous_triage(forensic_context)
 
         if not instant_freeze_applied:
@@ -144,14 +177,18 @@ class SentinelDaemon:
 
     def start(self):
         self.is_running = True
-        print("\n[SENTINEL]  Infinite Sentinel Loop initialized. Monitoring system state...")
+        print(
+            "\n[SENTINEL]  Infinite Sentinel Loop initialized. Monitoring system state..."
+        )
         print("[SENTINEL] Press Ctrl+C to abort daemon.\n")
 
         try:
             while self.is_running:
                 self._cycle_count += 1
                 host_metrics = self._collect_host_metrics()
-                print(f"[SENTINEL] Cycle {self._cycle_count}: load={host_metrics['load']:.2f}, free_mem={host_metrics['free_memory_pct']:.1f}%")
+                print(
+                    f"[SENTINEL] Cycle {self._cycle_count}: load={host_metrics['load']:.2f}, free_mem={host_metrics['free_memory_pct']:.1f}%"
+                )
 
                 try:
                     swarm_results = self.swarm.deploy_swarm()
@@ -163,22 +200,30 @@ class SentinelDaemon:
 
                     new_threat_level = self._score_threat(anomalies, host_metrics)
                     if new_threat_level != self.threat_level:
-                        print(f"[SENTINEL] Threat state changed from {self.threat_level} to {new_threat_level}.")
+                        print(
+                            f"[SENTINEL] Threat state changed from {self.threat_level} to {new_threat_level}."
+                        )
                     self.threat_level = new_threat_level
 
                     if anomalies:
                         if self.threat_level == "CRITICAL":
-                            print("[SENTINEL] [BLOOD RED] Critical threat posture engaged.")
+                            print(
+                                "[SENTINEL] [BLOOD RED] Critical threat posture engaged."
+                            )
                         self._zero_prompt_trigger(anomalies)
                     elif self.threat_level == "SAFE":
-                        print("[SENTINEL]  No anomalies detected. Maintaining baseline patrol.")
+                        print(
+                            "[SENTINEL]  No anomalies detected. Maintaining baseline patrol."
+                        )
 
                 except Exception as exc:
                     print("\n[SENTINEL]  Internal Loop Error Recovered:")
                     traceback.print_exc()
 
                 interval = self._get_polling_interval()
-                print(f"[SENTINEL] Sleeping for {interval:.2f} seconds before next scan.\n")
+                print(
+                    f"[SENTINEL] Sleeping for {interval:.2f} seconds before next scan.\n"
+                )
                 if self._wake_event.wait(timeout=interval):
                     self._wake_event.clear()
 

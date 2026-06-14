@@ -389,16 +389,19 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                                         "action_type", "SYSTEM_UPDATE"
                                     )
 
-                                    if action_name in [
+                                    spam_actions = [
                                         "TRIAGE_ITERATION",
+                                        "MAX_ITERATIONS_REACHED",
                                         "BENCHMARK_RECORDED",
-                                        "MAPPED",
                                         "DEPLOYED",
+                                        "MAPPED",
                                         "STARTUP",
                                         "INITIALIZATION",
                                         "UI_START",
                                         "SENTINEL_INIT",
-                                    ]:
+                                        "LEDGER_VERIFICATION",
+                                    ]
+                                    if action_name in spam_actions:
                                         continue
 
                                     description = latest_entry.get("description", "")

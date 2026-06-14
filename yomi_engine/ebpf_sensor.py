@@ -204,8 +204,8 @@ class eBPFSentinel:
         while time.time() - start_time < duration_sec:
             try:
                 self.bpf_instance.perf_buffer_poll(timeout=100)  # type: ignore
-                if malicious_intent_found:
-                    break
+                #if malicious_intent_found:
+                #    break
 
                 # Zero-Overhead Enforcement
                 time.sleep(0.01)
