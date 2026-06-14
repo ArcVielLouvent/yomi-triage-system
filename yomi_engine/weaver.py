@@ -72,7 +72,7 @@ class TemporalNarrativeWeaver:
     def generate_narrative(self) -> str:
         print("\n[*] Extracting cryptographic ledger data...")
 
-        raw_logs = self._secure_tail_logs(limit=5)
+        raw_logs = self._secure_tail_logs(limit=50)
 
         if not raw_logs:
             return "[!] No audit logs available to weave narrative."
@@ -101,24 +101,28 @@ class TemporalNarrativeWeaver:
         report += "Yomi Autonomous Engine has parsed the cryptographic ledger and reconstructed the following chain of events:\n\n"
 
         mitre_tactics = set()
+        counter = 1
 
-        for i, log in enumerate(raw_logs, 1):
+        for log in raw_logs:
+            action = self._sanitize_terminal(log.get("action_type", "UNKNOWN_ACTION"))
+            
+            if action in ["TRIAGE_ITERATION", "BENCHMARK_RECORDED", "MAX_ITERATIONS_REACHED"]:
+                continue
+
             timestamp = self._sanitize_terminal(
-                log.get("human_readable_time", "UNKNOWN_TIME")
+                log.get("timestamp_utc", log.get("created_at", "UNKNOWN_TIME"))
             )
             agent = self._sanitize_terminal(log.get("agent", "UNKNOWN_AGENT"))
-            action = self._sanitize_terminal(log.get("action", "UNKNOWN_ACTION"))
-            desc = self._sanitize_terminal(
-                log.get("description", "No description provided.")
-            )
+            desc = self._sanitize_terminal(log.get("description", "No description provided."))
             h_ash = self._sanitize_terminal(log.get("hash", "NO_HASH"))[:8]
 
             found_mitre = self.mitre_regex.findall(desc)
             mitre_tactics.update(found_mitre)
 
-            report += f"  {i}. [{timestamp}] {agent} executed '{action}'\n"
+            report += f"  {counter}. [{timestamp}] {agent} executed '{action}'\n"
             report += f"     -> Details: {desc}\n"
             report += f"     -> Integrity Hash: {h_ash}...\n\n"
+            counter += 1
 
         report += "[MITRE ATT&CK MAPPING CONFIRMED]\n"
         if mitre_tactics:
