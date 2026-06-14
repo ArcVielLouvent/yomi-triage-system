@@ -391,6 +391,7 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
         with Live(
             tui.render_layout(), refresh_per_second=4, screen=True, console=tui.console
         ) as live:
+            live.update(tui.render_layout())
             while not _global_shutdown_event.is_set():
                 if ledger_path.exists():
                     try:
