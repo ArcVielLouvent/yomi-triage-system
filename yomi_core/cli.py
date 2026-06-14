@@ -534,16 +534,20 @@ def main() -> None:
 
         # Deploy Sentinel Daemon
         sentinel_instance = _run_sentinel_daemon(audit)
-
         try:
-            from yomi_engine.ebpf_sensor import eBPFSentinel
+            import subprocess
+            import sys
 
-            ebpf = eBPFSentinel()
-            if ebpf.arm_sensor():
-                threading.Thread(
-                    target=ebpf.monitor_pid, args=(1, 86400), daemon=True
-                ).start()
-                logger.info("Ring-0 eBPF Sensor deployed and monitoring globally.")
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "from yomi_engine.ebpf_sensor import eBPFSentinel; s = eBPFSentinel(); s.arm_sensor(); s.monitor_pid(1, 86400)",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Ring-0 eBPF Sensor deployed in isolated vacuum.")
         except Exception as e:
             logger.error(f"Failed to deploy eBPF Sensor: {e}")
 
