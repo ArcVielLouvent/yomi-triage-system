@@ -488,7 +488,8 @@ def main() -> None:
             )
 
         # Deploy Sentinel Daemon
-        sentinel_instance = _run_sentinel_daemon(audit)
+        # sentinel_instance = _run_sentinel_daemon(audit)
+        sentinel_instance = None
 
         try:
             if args.headless:
