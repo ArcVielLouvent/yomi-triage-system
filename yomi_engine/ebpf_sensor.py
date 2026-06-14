@@ -54,10 +54,10 @@ class eBPFSentinel:
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
 
-            u32 *is_tracked = tracked_pids.lookup(&pid);
-            if (is_tracked == NULL) {
-                return 0; 
-            }
+           // u32 *is_tracked = tracked_pids.lookup(&pid);
+           // if (is_tracked == NULL) {
+           //     return 0; 
+           // }
 
             struct data_t data = {};
             data.pid = pid;
@@ -78,10 +78,10 @@ class eBPFSentinel:
             u64 pid_tgid = bpf_get_current_pid_tgid();
             u32 pid = pid_tgid >> 32;
 
-            u32 *is_tracked = tracked_pids.lookup(&pid);
-            if (is_tracked == NULL) {
-                return 0;
-            }
+            //u32 *is_tracked = tracked_pids.lookup(&pid);
+            //if (is_tracked == NULL) {
+            //    return 0;
+            //}
 
             struct data_t data = {};
             data.pid = pid;

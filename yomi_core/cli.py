@@ -368,7 +368,9 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
     ledger_path = Path(ledger_file)
 
     try:
-        with Live(tui.render_layout(), refresh_per_second=4, screen=True, console=tui.console) as live:
+        with Live(
+            tui.render_layout(), refresh_per_second=4, screen=True, console=tui.console
+        ) as live:
             while not _global_shutdown_event.is_set():
                 if ledger_path.exists():
                     try:
@@ -387,15 +389,25 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                                         "action_type", "SYSTEM_UPDATE"
                                     )
 
-                                    if action_name in ["TRIAGE_ITERATION", "BENCHMARK_RECORDED", "MAPPED", "DEPLOYED", "STARTUP", "INITIALIZATION", "UI_START", "SENTINEL_INIT"]:
+                                    if action_name in [
+                                        "TRIAGE_ITERATION",
+                                        "BENCHMARK_RECORDED",
+                                        "MAPPED",
+                                        "DEPLOYED",
+                                        "STARTUP",
+                                        "INITIALIZATION",
+                                        "UI_START",
+                                        "SENTINEL_INIT",
+                                    ]:
                                         continue
-                                    
+
                                     description = latest_entry.get("description", "")
 
                                     status = "SAFE"
                                     if (
                                         "FREEZE" in action_name
-                                        or "CRITICAL" in description
+                                        or "CRITICAL" in description.upper()
+                                        or "THREAT" in action_name
                                     ):
                                         status = "CRITICAL"
                                     elif (
