@@ -160,6 +160,8 @@ class eBPFSentinel:
             base_name = os.path.basename(raw_filename)
 
             if event.event_type == 1:
+                if "sans_hackathon" in raw_filename or "memory_dumps" in raw_filename:
+                    return
                 is_threat = False
 
                 if (
