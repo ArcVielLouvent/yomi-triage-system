@@ -152,14 +152,22 @@ class OpenClawGateway:
                 extracted = self._extract_json_payload(response.text)
 
             usage = parsed.get("usageMetadata", {})
-            total_tokens = usage.get("totalTokenCount", "N/A")
+            token_metrics = self._build_token_metrics(
+                backend="gemini",
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_text=extracted or response.text,
+                usage=usage,
+                temperature=0.0,
+            )
 
             if extracted:
                 self.audit.record_action(
                     "OPENCLAW",
                     "LLM_QUERY",
                     f"Gemini model {model} returned candidate intent.",
-                    metadata={"backend": "gemini", "model": model, "token_usage": total_tokens},
+                    metadata=token_metrics,
                 )
                 return extracted
         except Exception as exc:
@@ -192,14 +200,22 @@ class OpenClawGateway:
                 extracted = self._extract_json_payload(response.text)
 
             usage = parsed.get("usage", {})
-            total_tokens = usage.get("total_tokens", "N/A")
+            token_metrics = self._build_token_metrics(
+                backend="local",
+                model=model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response_text=extracted or response.text,
+                usage=usage,
+                temperature=0.0,
+            )
 
             if extracted:
                 self.audit.record_action(
                     "OPENCLAW",
                     "LLM_QUERY",
                     f"Local model {model} returned candidate intent.",
-                    metadata={"backend": "local", "model": model, "token_usage": total_tokens},
+                    metadata=token_metrics,
                 )
                 return extracted
         except Exception as exc:
@@ -242,6 +258,44 @@ class OpenClawGateway:
             if isinstance(text, str):
                 return text.strip()
         return None
+
+    def _build_token_metrics(
+        self,
+        backend: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_text: str,
+        usage: dict | None = None,
+        temperature: float = 0.0,
+    ) -> dict:
+        prompt_text = f"{system_prompt}\n{user_prompt}"
+        prompt_tokens = None
+        completion_tokens = None
+        total_tokens = None
+
+        if isinstance(usage, dict):
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            total_tokens = usage.get("total_tokens") or usage.get("totalTokenCount")
+
+        if prompt_tokens is None:
+            prompt_tokens = len(str(prompt_text)) // 4
+        if completion_tokens is None:
+            completion_tokens = len(str(response_text)) // 4
+        if total_tokens is None:
+            total_tokens = prompt_tokens + completion_tokens
+
+        return {
+            "backend": backend,
+            "model": model,
+            "token_usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+            "temperature": temperature,
+        }
 
     def _validate_generated_text(self, text: str) -> bool:
         extracted = self._extract_json_payload(text)
