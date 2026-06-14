@@ -304,7 +304,13 @@ def _get_new_ledger_logs(last_hash: str) -> list[dict]:
         with open(ledger_path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip()]
 
-        entries = [json.loads(l) for l in lines]
+        entries = []
+        for l in lines:
+            try:
+                entries.append(json.loads(l))
+            except Exception:
+                continue
+
         if not last_hash:
             return [entries[-1]] if entries else []
 
