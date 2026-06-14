@@ -530,6 +530,18 @@ def main() -> None:
         sentinel_instance = _run_sentinel_daemon(audit)
 
         try:
+            from yomi_engine.ebpf_sensor import eBPFSentinel
+
+            ebpf = eBPFSentinel()
+            if ebpf.arm_sensor():
+                threading.Thread(
+                    target=ebpf.monitor_pid, args=(1, 86400), daemon=True
+                ).start()
+                logger.info("Ring-0 eBPF Sensor deployed and monitoring globally.")
+        except Exception as e:
+            logger.error(f"Failed to deploy eBPF Sensor: {e}")
+
+        try:
             if args.headless:
                 logger.info("Running in headless mode. Systemd Event Loop engaged.")
                 # Systemd Non-Blocking Interruptible Event Loop

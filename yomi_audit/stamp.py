@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import requests
 
+
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Audit Module - The Immutable Stamp (v3.0)
 # Purpose: Cryptographic, tamper-evident chain-of-custody ledger.
@@ -25,7 +26,9 @@ import requests
 # ==============================================================================
 class SecurityError(Exception):
     """Exception raised for critical security and tampering incidents."""
+
     pass
+
 
 class ImmutableStamp:
     _instance = None
@@ -95,6 +98,7 @@ class ImmutableStamp:
         with open(self.ledger_lock_file, mode) as lock_handle:
             try:
                 import fcntl
+
                 has_fcntl = True
             except ImportError:
                 has_fcntl = False
@@ -179,14 +183,18 @@ class ImmutableStamp:
                 if not os.path.exists(os.path.join(self.data_dir, "audit_hmac.salt")):
                     confirm_password = getpass.getpass("Confirm Master Password: ")
                     if master_password != confirm_password:
-                        print("[YOMI-AUDIT] Passwords do not match. Aborting HMAC initialization.")
+                        print(
+                            "[YOMI-AUDIT] Passwords do not match. Aborting HMAC initialization."
+                        )
                         return None
             except Exception as exc:
                 print(f"[YOMI-AUDIT] Failed to read master password: {exc}")
                 return None
 
         if not master_password:
-            print("[YOMI-AUDIT] Empty master password is not allowed for ephemeral HMAC mode.")
+            print(
+                "[YOMI-AUDIT] Empty master password is not allowed for ephemeral HMAC mode."
+            )
             return None
 
         salt = self._load_or_create_ephemeral_salt()
@@ -231,9 +239,7 @@ class ImmutableStamp:
         if provider == "aws-secrets-manager":
             return self._load_hmac_key_from_aws_secrets_manager()
 
-        print(
-            f"[YOMI-AUDIT] Unsupported HMAC KMS provider '{provider}'."
-        )
+        print(f"[YOMI-AUDIT] Unsupported HMAC KMS provider '{provider}'.")
         return None
 
     def _load_hmac_key_from_vault(self) -> bytes | None:
@@ -242,9 +248,7 @@ class ImmutableStamp:
         field_name = os.environ.get("YOMI_AUDIT_HMAC_VAULT_FIELD", "hmac_key")
         token = os.environ.get("YOMI_AUDIT_HMAC_VAULT_TOKEN")
         if not vault_addr or not secret_path or not token:
-            print(
-                "[YOMI-AUDIT] Vault KMS configuration incomplete."
-            )
+            print("[YOMI-AUDIT] Vault KMS configuration incomplete.")
             return None
 
         try:
@@ -281,7 +285,9 @@ class ImmutableStamp:
             if binary_secret is not None:
                 return base64.b64decode(binary_secret)
         except ImportError:
-            print("[YOMI-AUDIT] boto3 is not installed; AWS secret retrieval unavailable.")
+            print(
+                "[YOMI-AUDIT] boto3 is not installed; AWS secret retrieval unavailable."
+            )
         except Exception as exc:
             print(f"[YOMI-AUDIT] AWS Secrets Manager lookup failed: {exc}")
         return None
@@ -359,9 +365,7 @@ class ImmutableStamp:
             )
             self._secure_path_permissions(metadata_name, 0o600)
             details = f" Reason: {reason}" if reason else ""
-            print(
-                f"[YOMI-AUDIT] Corrupted ledger backed up to {backup_name}.{details}"
-            )
+            print(f"[YOMI-AUDIT] Corrupted ledger backed up to {backup_name}.{details}")
         except Exception as exc:
             print(f"[YOMI-AUDIT] Failed to backup corrupted ledger: {exc}")
 
@@ -371,15 +375,15 @@ class ImmutableStamp:
             self.cleanup_corrupt_backups(retain_last=1)
 
     def _create_or_verify_checkpoint(self) -> None:
-        checkpoint_hash = hashlib.sha256(self.last_hash.encode('utf-8')).hexdigest()
+        checkpoint_hash = hashlib.sha256(self.last_hash.encode("utf-8")).hexdigest()
         try:
             if os.path.exists(self.checkpoint_file):
-                with open(self.checkpoint_file, 'rb') as chk:
-                    stored_hash = chk.read().decode('utf-8')
+                with open(self.checkpoint_file, "rb") as chk:
+                    stored_hash = chk.read().decode("utf-8")
                 if stored_hash != checkpoint_hash:
                     print(f"[YOMI-AUDIT] Checkpoint mismatch detected. Updating...")
-            with open(self.checkpoint_file, 'wb') as chk:
-                chk.write(checkpoint_hash.encode('utf-8'))
+            with open(self.checkpoint_file, "wb") as chk:
+                chk.write(checkpoint_hash.encode("utf-8"))
             self._secure_path_permissions(self.checkpoint_file, 0o600)
         except Exception as exc:
             print(f"[YOMI-AUDIT] Checkpoint creation failed: {exc}")
@@ -443,7 +447,9 @@ class ImmutableStamp:
                     try:
                         entry = json.loads(line)
                     except json.JSONDecodeError as exc:
-                        raise ValueError(f"Invalid JSON at line {line_number}: {exc.msg}")
+                        raise ValueError(
+                            f"Invalid JSON at line {line_number}: {exc.msg}"
+                        )
 
                     self._validate_ledger_entry(entry, line_number)
 
@@ -618,7 +624,9 @@ class ImmutableStamp:
         """
         # 1. If the checkpoint file does not exist yet (e.g., fresh installation), assume valid and initialize
         if not os.path.exists(self.notary_checkpoint_file):
-            print("[INFO] Notary checkpoint file not found. Initializing baseline state...")
+            print(
+                "[INFO] Notary checkpoint file not found. Initializing baseline state..."
+            )
             return True
 
         try:
@@ -629,7 +637,9 @@ class ImmutableStamp:
             # 3. Extract and isolate the signature from the payload to be re-hashed
             stored_signature = stored_manifest.pop("attestation_signature", None)
             if not stored_signature:
-                print("[ALERT] Tamper detected: Cryptographic attestation signature is missing!")
+                print(
+                    "[ALERT] Tamper detected: Cryptographic attestation signature is missing!"
+                )
                 return False
 
             # 4. CANONICALIZATION: Convert the dictionary back to a deterministic JSON string
@@ -637,21 +647,25 @@ class ImmutableStamp:
 
             # 5. RE-ATTESTATION: Recalculate the HMAC signature using the tool's internal secret key
             calculated_signature = hmac.new(
-                self.hmac_key, 
-                canonical_data.encode("utf-8"), 
-                hashlib.sha256
+                self.hmac_key, canonical_data.encode("utf-8"), hashlib.sha256
             ).hexdigest()
 
             # 6. VERIFICATION: Compare signatures using constant-time evaluation to prevent timing attacks
             if hmac.compare_digest(stored_signature, calculated_signature):
-                print("[SUCCESS] Checkpoint integrity verified. SOC attestation validated mathematically.")
+                print(
+                    "[SUCCESS] Checkpoint integrity verified. SOC attestation validated mathematically."
+                )
                 return True
             else:
-                print("[CRITICAL ALERT] DATABASE INTEGRITY COMPROMISED! Unauthorized file modification detected!")
+                print(
+                    "[CRITICAL ALERT] DATABASE INTEGRITY COMPROMISED! Unauthorized file modification detected!"
+                )
                 return False
 
         except Exception as e:
-            print(f"[ERROR] Failed to execute startup verification due to technical error: {e}")
+            print(
+                f"[ERROR] Failed to execute startup verification due to technical error: {e}"
+            )
             return False
 
     def _generate_record_id(self) -> str:
@@ -667,6 +681,15 @@ class ImmutableStamp:
         metadata: dict | None = None,
     ) -> str:
         with self._singleton_lock:
+            try:
+                with open(self.ledger_file, "r", encoding="utf-8") as f:
+                    lines = [line.strip() for line in f if line.strip()]
+                    if lines:
+                        self.last_hash = json.loads(lines[-1]).get(
+                            "hash", self.last_hash
+                        )
+            except Exception:
+                pass
             timestamp = datetime.now(timezone.utc)
             entry = {
                 "record_id": self._generate_record_id(),
