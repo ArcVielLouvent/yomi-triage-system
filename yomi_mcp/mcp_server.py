@@ -12,6 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_mcp.sift_toolkit import SiftArsenal
 from yomi_mcp.harness import YomiHarness
+from yomi_audit.stamp import ImmutableStamp
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: MCP Vault - Native Server Protocol (v11.0)
@@ -26,6 +27,7 @@ class YomiMCPServer:
     def __init__(self):
         self.arsenal = SiftArsenal()
         self.harness = YomiHarness()
+        self.audit = ImmutableStamp()
 
         self.MAX_WORKERS = 5
         self.worker_pool = concurrent.futures.ThreadPoolExecutor(
@@ -329,12 +331,26 @@ class YomiMCPServer:
             return json.dumps({"error": err_msg, "id": request_id})
 
         if tool_name == "run_cryogenic_freeze":
-            result = self.harness.validate_and_execute(
-                "freeze", safe_args["target_pid"]
+            intent = json.dumps(
+                {"action": "freeze", "target_pid": safe_args["target_pid"]}
+            )
+            result = self.harness.process_intent(intent)
+            self.audit.record_action(
+                "MCP_SERVER",
+                "FREEZE_COMMAND",
+                f"Executed freeze on PID {safe_args['target_pid']}",
             )
             return json.dumps({"jsonrpc": "2.0", "result": result, "id": request_id})
         elif tool_name == "run_thaw_process":
-            result = self.harness.validate_and_execute("thaw", safe_args["target_pid"])
+            intent = json.dumps(
+                {"action": "thaw", "target_pid": safe_args["target_pid"]}
+            )
+            result = self.harness.process_intent(intent)
+            self.audit.record_action(
+                "MCP_SERVER",
+                "THAW_COMMAND",
+                f"Executed thaw on PID {safe_args['target_pid']}",
+            )
             return json.dumps({"jsonrpc": "2.0", "result": result, "id": request_id})
 
         # Pre-emptive Load Shedding Check
@@ -432,9 +448,16 @@ class YomiMCPServer:
         result_str = str(raw_result)
         MAX_CHARS = 100000
         if len(result_str) > MAX_CHARS:
+            msg = f"Output for '{tool_name}' exceeded 100KB. Truncated by Vault Shield to protect LLM."
+            print(f"[YOMI-MCP] {msg}")
+            self.audit.record_action("MCP_VAULT", "OUTPUT_TRUNCATED", msg)
             result_str = (
                 result_str[:MAX_CHARS]
                 + "\n\n...[TRUNCATED BY YOMI VAULT: Output exceeds 100KB safety limit]..."
+            )
+        else:
+            self.audit.record_action(
+                "MCP_SERVER", "TOOL_EXECUTED", f"Successfully executed '{tool_name}'."
             )
 
         return json.dumps({"jsonrpc": "2.0", "result": result_str, "id": request_id})

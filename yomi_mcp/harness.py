@@ -8,6 +8,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_mcp.os_bridge import OSBridge
+from yomi_audit.stamp import ImmutableStamp
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: MCP Vault - The Air-Gapped Harness & Veto Logic (v5.0)
@@ -23,6 +24,7 @@ class YomiHarness:
     def __init__(self):
         self.os_bridge = OSBridge()
         self.allowed_actions = ["freeze", "thaw"]
+        self.audit = ImmutableStamp()
 
     def _is_critical_system_pid(self, pid: int) -> bool:
         """
@@ -153,8 +155,10 @@ class YomiHarness:
         veto_result = self._veto_check(intent_data)
 
         if veto_result["is_vetoed"]:
-            print(f"[YOMI-HARNESS] [BLOCKED] {veto_result['reason']}")
-            return {"status": "VETOED", "message": veto_result["reason"]}
+            msg = veto_result['reason']
+            print(f"[YOMI-HARNESS] [BLOCKED] {msg}")
+            self.audit.record_action("HARNESS", "VETO_ENGAGED", msg)
+            return {"status": "VETOED", "message": msg}
 
         # Unpack verified and safe data
         action = intent_data.get("action", "").lower().strip()
