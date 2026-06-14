@@ -100,7 +100,7 @@ class eBPFSentinel:
         """
 
     def arm_sensor(self) -> bool:
-        if self.is_armed and self.bpf_instance:
+        if self.is_armed and self.bpf_instance is not None:
             return True
 
         if self.os_bridge.environment not in [
@@ -138,7 +138,7 @@ class eBPFSentinel:
             return False
 
     def monitor_pid(self, target_pid: int, duration_sec: int = 3) -> bool:
-        if not self.is_armed or not self.bpf_instance:
+        if not self.is_armed or self.bpf_instance is None:
             print("[YOMI-eBPF] [WARNING] Sensor not armed.")
             return False
 
