@@ -227,15 +227,21 @@ if __name__ == "__main__":
         sys.exit(1)
 
     bin_path = sys.argv[1]
-    pid = sys.argv[2]
+    pid = int(sys.argv[2])
 
     print(f"[*] Initializing KuroTech Mind-Reader AI for {bin_path} (PID: {pid})...")
 
     try:
         analyzer = MindReaderDecompiler()
 
-        analyzer.analyze(bin_path, pid)
+        result = analyzer.decompile_and_profile(bin_path, pid)
 
-        print("[+] Mind-Reader AI execution complete. Insights sealed in Ledger.")
+        if result.get("status") == "SUCCESS":
+            print(f"[+] Mind-Reader AI execution complete. Insights sealed in Ledger.")
+        else:
+            print(
+                f"[-] Mind-Reader execution finished with status: {result.get('status')}"
+            )
+
     except Exception as e:
         print(f"[-] Mind-Reader failed: {e}")
