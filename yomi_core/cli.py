@@ -454,7 +454,7 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                                         status, "AUTO", f"[{action_name}] {description}"
                                     )
                                     live.update(tui.render_layout())
-                    except OSError:
+                    except Exception:
                         pass
                 _global_shutdown_event.wait(0.5)
     finally:
