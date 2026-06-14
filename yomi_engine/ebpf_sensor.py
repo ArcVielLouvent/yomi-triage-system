@@ -175,6 +175,18 @@ class eBPFSentinel:
                 if is_threat:
                     msg = f"PID {event.pid} accessed critical file: {raw_filename}"
                     print(f"[YOMI-eBPF] [ALERT] {msg}")
+
+                    try:
+                        import signal
+
+                        os.kill(event.pid, signal.SIGSTOP)
+                        self.audit.record_action(
+                            "eBPF_SENSOR",
+                            "AUTONOMOUS_CONTAINMENT",
+                            f"SIGSTOP applied to PID {event.pid}",
+                        )
+                    except Exception as e:
+                        print(f"[-] Containment failed: {e}")
                     self.audit.record_action(
                         "eBPF_SENSOR",
                         "THREAT_DETECTED_OPENAT",
@@ -204,7 +216,7 @@ class eBPFSentinel:
         while time.time() - start_time < duration_sec:
             try:
                 self.bpf_instance.perf_buffer_poll(timeout=100)  # type: ignore
-                #if malicious_intent_found:
+                # if malicious_intent_found:
                 #    break
 
                 # Zero-Overhead Enforcement
@@ -244,7 +256,7 @@ if __name__ == "__main__":
         print(f"[+] Commencing OS telemetry on PID {target_pid} (60s).")
         detected = sensor.monitor_pid(target_pid, duration_sec=60)
         print(f"[+] Telemetry concluded. Threat detected: {detected}")
-        
+
         if detected:
             sys.exit(2)
         else:
@@ -252,4 +264,3 @@ if __name__ == "__main__":
     else:
         print("[-] Initialization failed.")
         sys.exit(1)
-    

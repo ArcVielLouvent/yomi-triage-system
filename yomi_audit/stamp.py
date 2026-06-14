@@ -572,10 +572,7 @@ class ImmutableStamp:
             with open(self.ledger_file, "a", encoding="utf-8") as ledger:
                 ledger.write(serialized + "\n")
                 ledger.flush()
-                try:
-                    os.fsync(ledger.fileno())
-                except OSError:
-                    pass
+                os.fsync(ledger.fileno()) # Force physical write
         self._secure_path_permissions(self.ledger_file, 0o600)
         self._anchor_soc_checkpoint(entry)
 
@@ -681,6 +678,7 @@ class ImmutableStamp:
         metadata: dict | None = None,
     ) -> str:
         with self._singleton_lock:
+            self.last_hash = self._verify_ledger()
             try:
                 with open(self.ledger_file, "r", encoding="utf-8") as f:
                     lines = [line.strip() for line in f if line.strip()]
