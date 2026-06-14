@@ -217,3 +217,25 @@ class MindReaderDecompiler:
             "psychology": "Opportunistic and fast-moving.",
             "mitre_tactics": ["T1059 (Command and Scripting Interpreter)"],
         }
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3:
+        print("[!] Usage: python3 mind_reader.py <binary_path> <target_pid>")
+        sys.exit(1)
+
+    bin_path = sys.argv[1]
+    pid = sys.argv[2]
+
+    print(f"[*] Initializing KuroTech Mind-Reader AI for {bin_path} (PID: {pid})...")
+
+    try:
+        analyzer = MindReaderDecompiler()
+
+        analyzer.analyze(bin_path, pid)
+
+        print("[+] Mind-Reader AI execution complete. Insights sealed in Ledger.")
+    except Exception as e:
+        print(f"[-] Mind-Reader failed: {e}")
