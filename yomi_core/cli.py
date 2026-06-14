@@ -386,6 +386,10 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                                     action_name = latest_entry.get(
                                         "action_type", "SYSTEM_UPDATE"
                                     )
+
+                                    if action_name in ["TRIAGE_ITERATION", "BENCHMARK_RECORDED", "MAPPED", "DEPLOYED", "STARTUP", "INITIALIZATION", "UI_START", "SENTINEL_INIT"]:
+                                        continue
+                                    
                                     description = latest_entry.get("description", "")
 
                                     status = "SAFE"
@@ -488,8 +492,7 @@ def main() -> None:
             )
 
         # Deploy Sentinel Daemon
-        # sentinel_instance = _run_sentinel_daemon(audit)
-        sentinel_instance = None
+        sentinel_instance = _run_sentinel_daemon(audit)
 
         try:
             if args.headless:
