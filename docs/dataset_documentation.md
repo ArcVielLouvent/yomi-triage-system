@@ -105,4 +105,4 @@ python3 yomi_engine/dossier.py
 
 ```
 
-> **Validation:** Open the generated PDF in `yomi_data/reports/`. Every telemetry hit and caught hallucination is procedurally woven from the immutable HMAC-SHA256 ledger. (Check the `.jsonl` file to verify the cryptographic chain of custody).
+> **Validation:** Open the generated PDF in yomi_data/reports/. Note that while this PDF serves as a quick human-readable summary, the true "Court-Ready" immutable evidence is the cryptographically sealed yomi_chain_of_custody.jsonl file, which securely preserves all AI profiles and VETO records.
