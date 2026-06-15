@@ -15,7 +15,7 @@ To ensure strict adherence to the "Find Evil!" submission guidelines and make ev
 | **1. Code Repository & License** | ✅ | Public GitHub Repository. [MIT License](LICENSE) is included in the root directory. |
 | **2. Demo Video (Max 5 Min)** | ✅ | Available on YouTube: [YouTube](https://www.youtube.com/watch?v=212GHYCgO8c&feature=youtu.be)|
 | **3. Architecture Diagram** | ✅ | Located in [Section 4: System Architecture](#4-system-architecture--data-flow) (Mermaid Diagrams & AI-Readable Captions). |
-| **4. Written Project Description** | ✅ | Full narrative available on our [Devpost Submission Page](#). |
+| **4. Written Project Description** | ✅ | Full narrative available on our [Devpost Submission Page](https://devpost.com/software/yomi-triage-system-autonomous-dfir-engine). |
 | **5. Dataset Documentation** | ✅ | Located in [`docs/dataset_documentation.md`](docs/dataset_documentation.md). Details SANS Egnyte Ground Truth and native OS testing. |
 | **6. Accuracy Report** | ✅ | Located in [`docs/accuracy_report.md`](docs/accuracy_report.md). Details VETO constraints, hallucination defense, and known dossier bias. |
 | **7. Try-It-Out Instructions** | ✅ | Step-by-step SIFT deployment guide located in `docs/dataset_documentation.md`. |
