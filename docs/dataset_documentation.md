@@ -1,95 +1,108 @@
-# YOMI TRIAGE SYSTEM: Dataset & Reproducibility Documentation
+<div align="center">
+  <h1>YOMI TRIAGE SYSTEM</h1>
+  <h2>Dataset & Reproducibility Documentation</h2>
+</div>
 
-## 1. Overview
-This document outlines the datasets, memory captures, disk images, and telemetry logs utilized to evaluate, benchmark, and validate the **Yomi Triage System** during the SANS "Find Evil!" Hackathon.
+## 1. Overview & Dataset Strategy
 
-All datasets were curated to rigorously test Yomi's autonomous capabilities under hostile conditions:
-- **OpenClaw LLM Validation:** Testing the accuracy of the Triad Council and Epistemic Doubt threshold (>40%) using high-noise artifacts.
-- **MCP OSBridge Stability:** Ensuring legacy SIFT Toolkit C-binaries execute without causing resource exhaustion (OOM) via the 100KB Context Shield.
-- **Ring-0 Telemetry:** Validating the eBPF tracepoints (The Shadow Net) against evasive fileless malware syscalls.
-
-## 2. Primary Data Sources
+This document outlines the datasets, memory captures, and telemetry logs utilized to evaluate the **KuroTech Yomi** architecture. In alignment with the SANS Find Evil! Hackathon mandate, we utilized a combination of exact official case data and live deterministic OS artifacts.
 
 ### A. SANS Official Starter Case Data (Ground Truth)
-The baseline foundation for our forensic testing utilizes the exact official case data provided by the SANS Institute. We highly recommend judges utilize this identical dataset to reproduce our Live Triage benchmarks.
-- **Source:** [SANS Official Egnyte Repository](https://sansorg.egnyte.com/fl/HhH7crTYT4JK)
-- **Data Types:** Memory Dumps (Raw RAM captures), Disk Images (E01/DD), and Network PCAPs.
-- **Usage in Yomi:** Used directly to benchmark `mcp_server.py` (Volatility/Plaso tracing) and validate the autonomous capability to prevent LLM hallucination when ingesting multi-gigabyte data streams.
+To rigorously test Yomi's Model Context Protocol (MCP) and Architectural Vault Shields, we utilized the official SANS-provided datasets.
+-   **Specific Target:** `win7-32-nromanoff-memory.001` (2GB Memory Dump)
+-   **Usage in Yomi:** Used specifically to benchmark `mcp_server.py` via Volatility. We proved that Yomi can ingest a 2GB memory dump, parse it through Volatility `malfind`, and architecturally truncate the output to 100KB *before* it hits the LLM, preventing context window overflow (OOM).
+-   **What It Found:** The agent successfully parsed the truncated payload, identifying embedded memory anomalies without suffering from token exhaustion.
 
-### B. Live System Binaries (Native OS Testing)
-To test the live-action components of Yomi (such as `ebpf_sensor.py` and `shadow_net.py`) without introducing live malware into the SIFT environment, we utilized standard, benign Linux processes generating intentional I/O noise.
+### B. Live System Binaries & Syscalls (Native OS Testing)
+To test the live-action components of Yomi (eBPF sensors and Autonomous Containment) without introducing live malware that could corrupt the SIFT environment, we utilized standard Linux processes generating intentional, malicious-looking I/O anomalies (e.g., bypassing standard file access to read `/etc/shadow` via file descriptors).
+-   **What It Found:** The system successfully detected `openat` syscall anomalies, autonomously issued `SIGSTOP` freezes, mapped the behavior to MITRE ATT&CK Tactics (e.g., T1027), and generated dynamic APT signatures (e.g., `CVE-2026-YOMI4209`) directly into the local Threat Intel database.
 
-## 3. Data Structure & OPSEC Compliance
 
-To comply with GitHub's Terms of Service and KuroTech's strict Operational Security (OPSEC) protocols, **no live malware, multi-gigabyte memory dumps, or massive disk images are committed to this repository.**
+## 2. Reproduce Instructions (Replicating the Video Demo)
 
-For SANS Judges reproducing this environment on a standard SIFT Workstation OVA, please structure your local data directory as follows:
+To ensure perfect deterministic evaluation, SANS Judges can replicate the exact sequence demonstrated in our submission video by running the following commands on a standard SANS SIFT Workstation (v2026).
 
-```text
-/mnt/cases/sans_hackathon/
-├── memory_dumps/
-│   └── sans_case_01.raw
-├── disk_images/
-│   └── sans_case_01.E01
-└── pcaps/
-    └── lateral_movement.pcap
+**Preparation:** Open two terminal windows side-by-side. Log into both as root (`sudo su -`) and navigate to the project directory: `cd /home/sansforensics/yomi-triage-system`. Ensure your Gemini API key is exported: `export GEMINI_API_KEY="YOUR_KEY"`.
+
+### Step 1: Initialize the EDR & eBPF Hooks
+
+*Terminal 1 (Left)* - Clean the previous ledger and boot the Yomi UI gateway. This autonomously invokes LLVM to compile and inject the Ring-0 eBPF sensor.
+
+```bash
+rm -f yomi_data/*.jsonl* yomi_data/*.lock yomi_data/reports/*; clear
+python3 yomi_core/cli.py --auto
 
 ```
 
-> ⚠️ **PATH ENFORCEMENT NOTICE:** Yomi's MCP Vault (`mcp_server.py` & `sift_toolkit.py`) strictly enforces **Absolute Path Declarations**. Relative Path Traversal attempts will be autonomously vetoed.
+*(Leave this terminal running. The TUI will actively monitor kernel syscalls).*
 
-## 4. Reproducibility & Testing Instructions
+### Step 2: Trigger an Evasive Threat (Autonomous Containment)
 
-To ensure deterministic evaluation, follow these replication steps on your SIFT workstation:
+*Terminal 2 (Right)* - Simulate an adversary using a file descriptor to bypass traditional monitoring and access a critical file.
 
-### Test 1: MCP Server Volatility Analysis (Context Shield Validation)
+Bash
 
-This test validates Yomi's Model Context Protocol (MCP) server capability to safely ingest heavy forensic outputs at the OS level.
+```bash
+bash -c 'exec 3< /etc/shadow; sleep 300' &
 
-1.  Mount or place the SANS memory dump in your local directory.
+```
 
-2.  Configure your AI Agent (e.g., Claude Code, OpenClaw) to connect to Yomi's MCP Server. The server communicates via standard I/O:
+> **Validation:** Terminal 1 will immediately flash RED. The eBPF sensor intercepts the `openat` syscall and autonomously issues a `SIGSTOP` freeze with zero human intervention. Note the Target PID generated.
 
-    ```bash
-    sudo python3 yomi_mcp/mcp_server.py
+### Step 3: Test Swarm & Hunter (Honesty Over Perfection)
 
-    ```
-
-3.  Issue the natural language prompt to your Agent: *"Use the MCP tool 'run_volatility_linux_malfind' to scan the absolute path `/mnt/cases/sans_hackathon/memory_dumps/sans_case_01.raw`"*
-
-4.  **Expected Result:** The MCP server autonomously validates the path, invokes Volatility, applies the *100KB Anti-OOM Context Shield*, and returns a safe, truncated JSON payload to the LLM without crashing the memory context.
-
-### Test 2: Autonomous eBPF Ring-0 Hook Execution (Shadow Net)
-
-This test validates the low-level kernel tracking mechanism natively. A dormant `sleep` process generates no telemetry, so we use a safe I/O loop to simulate noisy malware.
-
-1.  Execute a background noisy process and attach the eBPF hook immediately:
-
-    ```bash
-    while true; do cat /etc/hostname > /dev/null; sleep 0.2; done & sudo python3 yomi_engine/ebpf_sensor.py $!
-
-    ```
-
-2.  **Expected Result:** Yomi will grab the PID of the spawned loop (`$!`), attach the eBPF kernel hooks (`sys_enter`), and continuously stream real-time syscall telemetries to the terminal.
-
-3.  Press `Ctrl+C` to cleanly detach the eBPF hooks.
-
-## 5. Cryptographic Artifact Ledger & Verification
-
-All execution interactions during our internal testing phase have been securely purged from this repository to ensure a pristine deployment slate.
-
-When Yomi operates, new deterministic cryptographic hashes will be generated autonomously and sealed within `yomi_data/yomi_chain_of_custody.jsonl`.
-
-### Verifying Ledger Integrity (Autonomous Boot Check)
-
-Unlike standard EDRs that require manual log audits, Yomi integrates Autonomous Cryptographic Verification directly into its boot sequence via `validate_data_store()`.
-
-To verify that your audit trail has not been tampered with, initialize the Triage CLI:
+*Terminal 2 (Right)* - Pass the frozen PID (e.g., `1234`) to the concurrent Swarm and disk artifact Hunter.
 
 
 ```bash
-sudo yomi-triage --auto
+export YOMI_FORENSIC_PATH="/dev/sda1"
+python3 yomi_engine/swarm.py
+python3 yomi_engine/hunter.py <INSERT_FROZEN_PID>
 
 ```
 
-**Expected Behavior:** During the startup sequence, `cli.py` invokes the validation engine. If the HMAC-SHA256 ledger chain is mathematically intact, the CLI boot proceeds to the Sentinel Dashboard. If any data has been modified, the `logger` will instantly throw an anomaly warning indicating the data store is compromised.
+> **Validation:** Observe the Hunter agent gracefully handling a `plaso` spatial error on the unsupported `/dev/sda1` partition. It logs the failure and self-corrects its investigative path instead of crashing.
+
+### Step 4: AI Reasoning & Token Provenance
+
+*Terminal 2 (Right)* - Run the Mind-Reader decompiler to profile the threat using the LLM.
+
+```bash
+python3 yomi_engine/mind_reader.py /bin/ls <INSERT_FROZEN_PID>
+
+```
+
+> **Validation:** This proves authentic AI execution. The LLM generates a psychological profile of the threat and strictly injects its exact Token Usage metrics directly into the cryptographic ledger.
+
+### Step 5: Test Architectural Guardrails (Vault Shield & Veto)
+
+*Terminal 2 (Right)* - Test Yomi's hardcoded constraint implementations without relying on LLM prompt-adherence.
+
+*Test the Volatility Vault Shield (Requires the SANS memory dump placed in the path below):*
+
+
+```bash
+python3 -c "from yomi_mcp.mcp_server import YomiMCPServer; print(YomiMCPServer().call_tool('run_volatility_linux_malfind', {'memory_dump_path': '/mnt/cases/sans_hackathon/memory_dumps/win7-32-nromanoff.raw'}))"
+
+```
+
+*Test the Air-Gapped Harness Veto (Attempting to freeze critical PID 1):*
+
+
+```bash
+python3 -c "from yomi_mcp.harness import YomiHarness; print(YomiHarness().process_intent('{\"action\": \"freeze\", \"target_pid\": 1}'))"
+
+```
+
+> **Validation:** The Harness explicitly rejects the action and logs `VETO_ENGAGED`. This proves that security boundaries are enforced architecturally, not via prompts.
+
+### Step 6: Generate the Court-Ready Dossier
+
+*Terminal 2 (Right)* - Parse the ledger and compile the final human-readable report.
+
+```bash
+python3 yomi_engine/dossier.py
+
+```
+
+> **Validation:** Open the generated PDF in `yomi_data/reports/`. Every telemetry hit and caught hallucination is procedurally woven from the immutable HMAC-SHA256 ledger. (Check the `.jsonl` file to verify the cryptographic chain of custody).
