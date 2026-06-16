@@ -10,8 +10,8 @@ This document outlines the datasets, memory captures, and telemetry logs utilize
 ### A. SANS Official Starter Case Data (Ground Truth)
 To rigorously test Yomi's Model Context Protocol (MCP) and Architectural Vault Shields, we utilized the official SANS-provided datasets.
 -   **Specific Target:** `win7-32-nromanoff-memory.001` (2GB Memory Dump)
--   **Usage in Yomi:** Used specifically to benchmark `mcp_server.py` via Volatility. We proved that Yomi can ingest a 2GB memory dump, parse it through Volatility `malfind`, and architecturally truncate the output to 100KB *before* it hits the LLM, preventing context window overflow (OOM).
--   **What It Found:** The agent successfully parsed the truncated payload, identifying embedded memory anomalies without suffering from token exhaustion.
+-   **Usage in Yomi:** Used specifically to benchmark `mcp_server.py` via Volatility. 
+-   **What It Found (Honesty Declaration):** During live execution, Volatility failed to parse the memory dump due to VMware cross-OS symlink constraints and extension mismatches (`.raw` vs `.001`). **Crucially**, instead of the LLM hallucinating findings from an empty or errored output, the MCP Vault successfully trapped the I/O error, logged a Tool Failure to the ledger, and autonomously pivoted to the eBPF Shadow Net. This proves our architecture's resilience against catastrophic tool failures.
 
 ### B. Live System Binaries & Syscalls (Native OS Testing)
 To test the live-action components of Yomi (eBPF sensors and Autonomous Containment) without introducing live malware that could corrupt the SIFT environment, we utilized standard Linux processes generating intentional, malicious-looking I/O anomalies (e.g., bypassing standard file access to read `/etc/shadow` via file descriptors).
