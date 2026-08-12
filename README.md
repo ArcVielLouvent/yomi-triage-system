@@ -90,7 +90,7 @@ Designed to fulfill SANS's **"Purpose-Built MCP Server"** and **"Direct Agent Ex
 
 ## 4. System Architecture & Data Flow
 
-![Yomi System Topology](docs/system_topology.svg)
+![Yomi System Topology](docs/System_Topology.svg)
 
 Yomi intentionally separates the forensic ingestion layer, AI reasoning layer, and audit containment layer to enforce strict security boundaries. The LLM acts purely as a reasoning engine, while the OSBridge and MCP Vault handle physical execution.
 

@@ -22,7 +22,7 @@ To test the live-action components of Yomi (eBPF sensors and Autonomous Containm
 
 To ensure perfect deterministic evaluation, SANS Judges can replicate the exact sequence demonstrated in our submission video by running the following commands on a standard SANS SIFT Workstation (v2026).
 
-**Preparation:** Open two terminal windows side-by-side. Log into both as root (`sudo su -`) and navigate to the project directory: `cd /home/sansforensics/yomi-triage-system`. Ensure your Gemini API key is exported: `export GEMINI_API_KEY="YOUR_KEY"`.
+**Preparation:** Open two terminal windows side-by-side. Log into both as root (`sudo su -`) and navigate to the project directory: `cd /home/sansforensics/yomi-triage-system`. Ensure your Gemini API key is exported: `export YOMI_GEMINI_API_KEY="YOUR_KEY"`.
 
 ### Step 1: Initialize the EDR & eBPF Hooks
 
