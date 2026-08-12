@@ -1,0 +1,46 @@
+name: Main CI (release gate)
+
+# Strictest gate. Nothing reaches main without: everything develop-ci already
+# proved, PLUS the package actually builds, PLUS the CLI actually boots
+# end-to-end in headless mode against a synthetic (non-destructive) scenario.
+# This is the difference between "tests pass" and "the product works."
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  full-suite:
+    uses: ./.github/workflows/develop-ci.yml
+
+  build-package:
+    runs-on: ubuntu-latest
+    needs: full-suite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: build-package
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt
+      - name: Boot Guardian headless against synthetic scenario, expect clean shutdown
+        env:
+          YOMI_AIR_GAPPED_MODE: "true"
+          YOMI_MODULE_PROFILE: "ci-smoke"
+        run: python scripts/smoke_test_cli.py --timeout 30

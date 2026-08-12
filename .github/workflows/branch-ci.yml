@@ -1,0 +1,38 @@
+name: Branch CI (foundation/* and feature/*)
+
+# Fast, narrow feedback loop for in-progress work. Runs lint + only the unit
+# tests for the layer(s) that branch is touching, so contributors get signal
+# in seconds/minutes, not by running the entire suite every push.
+
+on:
+  push:
+    branches:
+      - "foundation/**"
+      - "feature/**"
+      - "docs/**"
+  pull_request:
+    branches:
+      - "develop"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run unit tests only (no integration, no sudo, no real binaries)
+        run: pytest tests/unit -v --cov=yomi_audit --cov=yomi_data --cov=yomi_mcp --cov=yomi_core --cov=yomi_engine --cov-report=term-missing

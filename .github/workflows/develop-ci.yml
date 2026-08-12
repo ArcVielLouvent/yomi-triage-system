@@ -1,0 +1,46 @@
+name: Develop CI (integration gate)
+
+# This is the real gate before anything is eligible for main. Runs the FULL
+# unit suite across every layer plus all integration chain tests. This is
+# where we prove modules that were verified in isolation still behave when
+# forged together (Sentinel -> Router -> Harness, Swarm -> Hunter -> Dossier,
+# and eventually the full Guardian pipeline).
+
+on:
+  push:
+    branches: ["develop"]
+  pull_request:
+    branches: ["develop", "main"]
+
+jobs:
+  full-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: ruff check .
+      - name: Unit tests (all layers)
+        run: pytest tests/unit -v --cov --cov-report=xml
+      - name: Integration tests (cross-module chains)
+        run: pytest tests/integration -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  benchmark-regression:
+    runs-on: ubuntu-latest
+    needs: full-suite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run telemetry benchmarks and compare vs baseline
+        run: pytest tests/benchmarks -v --benchmark-json=bench_result.json
+      - name: Fail if latency regressed beyond threshold
+        run: python scripts/check_benchmark_regression.py bench_result.json
