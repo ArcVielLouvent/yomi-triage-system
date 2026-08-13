@@ -338,10 +338,10 @@ def _run_console_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                 # Console-level os.stat VFS optimization
                 current_size = ledger_path.stat().st_size
                 if current_size != last_ledger_size:
-                    latest_entry = _get_latest_ledger_log()
+                    new_entries = _get_new_ledger_logs(last_hash)
                     last_ledger_size = current_size
 
-                    if latest_entry is not None:
+                    for latest_entry in new_entries:
                         current_hash = latest_entry.get("hash", "")
                         if current_hash and current_hash != last_hash:
                             last_hash = current_hash
@@ -537,7 +537,6 @@ def main() -> None:
         sentinel_instance = _run_sentinel_daemon(audit)
         try:
             import subprocess
-            import sys
 
             subprocess.Popen(
                 [
