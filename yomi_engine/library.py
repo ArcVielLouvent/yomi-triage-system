@@ -477,6 +477,11 @@ class OmniLibrary:
         }
 
     def query_cve(self, cve_id: str) -> dict | None:
+        # NOTE: this used to be defined twice (copy-paste artifact). The
+        # duplicate silently shadowed this one and used a shallow `.copy()`
+        # instead of deepcopy, meaning callers could mutate nested fields of
+        # the in-memory CVE cache through the "copy" they were handed.
+        # Consolidated back to the deepcopy-safe version.
         if not isinstance(cve_id, str) or not cve_id.strip():
             return None
 
@@ -490,21 +495,6 @@ class OmniLibrary:
             entry = self._load_year_file(file_year).get(cve_id.strip())
             if entry:
                 return copy.deepcopy(entry)
-        return None
-
-    def query_cve(self, cve_id: str) -> dict | None:
-        if not isinstance(cve_id, str) or not cve_id.strip():
-            return None
-
-        year = self._extract_year_from_cve_id(cve_id.strip())
-        if year:
-            return self._load_year_file(year).get(cve_id.strip(), {}).copy() or None
-
-        # Lock-free scan for unformatted CVE queries
-        for file_year in sorted(self.year_index, reverse=True):
-            entry = self._load_year_file(file_year).get(cve_id.strip())
-            if entry:
-                return entry.copy()
         return None
 
     def get_metadata(self) -> dict:

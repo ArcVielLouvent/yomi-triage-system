@@ -18,7 +18,6 @@ ledger entries into the actual project's `yomi_data/` directory.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -27,7 +26,7 @@ import pytest
 # Make the project root importable when tests are run from anywhere.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from yomi_audit import stamp as stamp_module  # noqa: E402
+from yomi_audit import stamp as stamp_module
 
 
 @pytest.fixture

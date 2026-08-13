@@ -20,8 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from yomi_mcp.os_bridge import OSBridge  # noqa: E402
-
+from yomi_mcp.os_bridge import OSBridge
 
 LINUX_ONLY = pytest.mark.skipif(
     platform.system() != "Linux", reason="SIGSTOP/SIGCONT behavior is Linux-specific"

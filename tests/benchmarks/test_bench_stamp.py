@@ -25,10 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def run_benchmark(n_entries: int = 200) -> dict:
-    from yomi_audit import stamp as stamp_module
-
     # Isolated temp instance -- benchmarks must never touch the real ledger.
     import tempfile
+
+    from yomi_audit import stamp as stamp_module
 
     with tempfile.TemporaryDirectory() as tmp:
         fake_module_dir = Path(tmp) / "fake_pkg" / "yomi_audit"
