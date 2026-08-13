@@ -27,19 +27,20 @@ jobs:
         run: pytest tests/unit -v --cov --cov-report=xml
       - name: Integration tests (cross-module chains)
         # tests/integration/ has no test_*.py files yet (scheduled for
-        # Fase 4) -- pytest exits with code 5 ("no tests collected") on an
-        # empty suite, which GitHub Actions treats as a failed step. Treat
-        # exit code 5 as a pass (nothing to run yet is not the same as
-        # something failing) so this step starts actually gating once real
-        # integration tests land, instead of blocking every PR until then.
+        # Fase 4). Rather than run pytest against an empty suite and deal
+        # with its exit-code-5 ("no tests collected") behavior under
+        # GitHub Actions' `bash -e` runner (which caused two subtly broken
+        # earlier versions of this guard -- see git history on this line
+        # for what didn't work and why), just check upfront whether any
+        # test_*.py files exist yet, matching the same check run_tests.sh
+        # uses locally. Simpler, and side-steps the errexit pitfalls
+        # entirely instead of working around them.
         run: |
-          pytest tests/integration -v
-          code=$?
-          if [ $code -eq 5 ]; then
+          if [ -z "$(find tests/integration -name 'test_*.py' 2>/dev/null)" ]; then
             echo "No integration tests yet (expected until Fase 4) -- not a failure."
             exit 0
           fi
-          exit $code
+          pytest tests/integration -v
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
