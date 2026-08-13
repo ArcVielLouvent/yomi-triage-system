@@ -11,6 +11,7 @@ on:
     branches: ["develop"]
   pull_request:
     branches: ["develop", "main"]
+  workflow_call: {}  # allows main-ci.yml to call this workflow directly
 
 jobs:
   full-suite:
@@ -25,7 +26,20 @@ jobs:
       - name: Unit tests (all layers)
         run: pytest tests/unit -v --cov --cov-report=xml
       - name: Integration tests (cross-module chains)
-        run: pytest tests/integration -v
+        # tests/integration/ has no test_*.py files yet (scheduled for
+        # Fase 4) -- pytest exits with code 5 ("no tests collected") on an
+        # empty suite, which GitHub Actions treats as a failed step. Treat
+        # exit code 5 as a pass (nothing to run yet is not the same as
+        # something failing) so this step starts actually gating once real
+        # integration tests land, instead of blocking every PR until then.
+        run: |
+          pytest tests/integration -v
+          code=$?
+          if [ $code -eq 5 ]; then
+            echo "No integration tests yet (expected until Fase 4) -- not a failure."
+            exit 0
+          fi
+          exit $code
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -40,7 +54,11 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Run telemetry benchmarks and compare vs baseline
-        run: pytest tests/benchmarks -v --benchmark-json=bench_result.json
-      - name: Fail if latency regressed beyond threshold
-        run: python scripts/check_benchmark_regression.py bench_result.json
+      - name: Run benchmarks
+        # NOTE: we do NOT use pytest-benchmark's --benchmark-json flag here
+        # -- that plugin isn't in requirements-dev.txt. Our benchmark tests
+        # (see tests/benchmarks/test_bench_stamp.py) measure and assert
+        # their own sanity-floor threshold internally instead.
+        run: pytest tests/benchmarks -v -s
+      - name: Check for regression vs committed baseline
+        run: python scripts/check_benchmark_regression.py
