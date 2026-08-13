@@ -8,11 +8,11 @@ sessions or phases, and each entry says whether it's fixed yet.
 
 1. **`docs/dataset_documentation.md` told judges to `export GEMINI_API_KEY`,
    but `router.py` reads `YOMI_GEMINI_API_KEY`.** Following the doc literally
-   = LLM cascade silently never activates. Fixed on `develop`.
+   = LLM cascade silently never activates. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`).
 
 2. **`README.md` referenced `docs/system_topology.svg` (lowercase), actual
    file is `docs/System_Topology.svg`.** Broken image link on any
-   case-sensitive filesystem (Linux, GitHub raw). Fixed on `develop`.
+   case-sensitive filesystem (Linux, GitHub raw). Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`).
 
 3. **`yomi_data/recovery/` created at runtime by `shadow_net.py` (ELF
    recovery from RAM) had no `.gitkeep`,** unlike the other 6 data
@@ -22,7 +22,7 @@ sessions or phases, and each entry says whether it's fixed yet.
 4. **`yomi_core/cli.py` `--install` flag crashes 100% of the time**
    (`UnboundLocalError` on `sys.exit(0)`), caused by a redundant local
    `import sys` later in the same `main()` function shadowing the
-   module-level import for the whole function scope. Fixed on `develop`
+   module-level import for the whole function scope. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`)
    (removed the redundant local import).
 
 5. **`_run_console_loop()` in `cli.py` called `_get_latest_ledger_log()`,
@@ -30,7 +30,7 @@ sessions or phases, and each entry says whether it's fixed yet.
    on first ledger-size change in console/headless fallback mode. The
    sibling `_run_tui_loop()` had already been correctly updated to call the
    real helper (`_get_new_ledger_logs(last_hash)`); console mode was never
-   brought in sync. Fixed on `develop` (console loop now matches TUI loop's
+   brought in sync. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`) (console loop now matches TUI loop's
    correct pattern).
 
 6. **`query_cve()` was defined twice in `yomi_engine/library.py`.** The
