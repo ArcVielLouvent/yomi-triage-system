@@ -97,3 +97,25 @@ sessions or phases, and each entry says whether it's fixed yet.
 - 1x `E722` bare `except:` in `ebpf_sensor.py`.
 - ~30 import-sort / f-string-cosmetic findings across the repo (ruff
   `--fix`-able), deferred for the same reason.
+
+## Coverage gaps found during pre-merge review (not bugs, but blind spots)
+
+12. **`yomi_audit/stamp.py` is only 54% covered by Fase 1 tests.** The
+    untested 46% includes security-relevant paths that have never been
+    executed by any test: KMS/Vault/AWS-Secrets-Manager HMAC key retrieval,
+    password-derived ephemeral key generation, corrupted-ledger backup +
+    cleanup, and SOC checkpoint anchoring/verification. CI passing does not
+    mean these paths are correct -- it means they've never been exercised
+    at all. Flagged as the top coverage priority for whichever phase next
+    touches `stamp.py`.
+
+13. **`_create_or_verify_checkpoint()` prints "Checkpoint mismatch
+    detected. Updating..." on every normal ledger write since the last
+    checkpoint** -- this is expected behavior (checkpoint just needs to
+    catch up), not a tamper signal, but the wording reads like a security
+    alert. Risk: operators habituate to seeing this message and start
+    ignoring it, which defeats its purpose on the rare occasion a mismatch
+    *is* real tampering. Consider distinguishing "routine update" from
+    "verification failure" in the log wording. Not fixed here (behavior
+    change, not test-writing); flagged for whoever next touches this
+    function.
