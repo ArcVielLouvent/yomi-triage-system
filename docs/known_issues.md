@@ -119,3 +119,37 @@ sessions or phases, and each entry says whether it's fixed yet.
     "verification failure" in the log wording. Not fixed here (behavior
     change, not test-writing); flagged for whoever next touches this
     function.
+
+## Fase 2 Batch 2 findings (remediator.py, mirage.py)
+
+14. **`remediator.py`'s `_validate_payload` has no critical-PID protection**
+    (unlike `harness.py`'s PID<=100 hardblock). A payload targeting PID 1
+    (init) generates a rollback script successfully. The script isn't
+    auto-executed, but nothing stops one from being generated. Captured as
+    a regression test (`test_KNOWN_GAP_no_critical_pid_protection` in
+    `tests/unit/test_remediator.py`).
+
+    Status: OPEN.
+
+15. **`remediator.py`'s "critical system path" check is an exact match, not
+    a prefix check.** `/bin/bash` and `/etc/passwd` pass validation despite
+    being core system files, because the check only compares against the
+    bare directory strings ("/bin", "/etc") themselves. Practical impact
+    is limited since the generated script's kill commands only reference
+    `pid`, never `file_path` -- but the check's own comment claims broader
+    protection than it actually provides. Captured as
+    `test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix`.
+
+    Status: OPEN.
+
+16. **`mirage.py`'s `teardown_hallucination` boundary check uses string
+    `.startswith()`, not proper path containment** -- theoretically
+    vulnerable to sibling-directory prefix matching (e.g. a folder named
+    `mirage_env_EVIL` also "starts with" `mirage_env`). Not exploitable
+    through the current public API (target_path is always built from an
+    int-cast pid + a 2-value-constrained prefix), but flagged as a pattern
+    to avoid if this code is ever refactored to accept more flexible
+    input. Captured as
+    `test_teardown_boundary_check_documented_prefix_weakness`.
+
+    Status: OPEN (defense-in-depth hardening, not urgent).

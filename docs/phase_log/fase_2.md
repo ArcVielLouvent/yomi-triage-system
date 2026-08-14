@@ -79,14 +79,58 @@ Nggak ada bug baru ditemukan.
 `harness.py` khususnya, itu guardrail keamanan paling kritis). Konfirmasi
 1 akar bug lama (`weaver.py`/MITRE) secara presisi.
 
-### ⏳ Belum dikerjakan (Batch 2 & 3)
-Batch 2 (sedang): `remediator.py`, `mirage.py`
-Batch 3 (susah): `library.py`, `sift_toolkit.py`, `ebpf_sensor.py`, `sandbox.py`
+### ✅ `remediator.py` (20 test)
+Validasi payload, generate script (urutan STOP→dump→KILL, permission 0o750,
+proteksi injeksi lewat newline stripping), rantai fallback signing
+(GPG → HMAC-SHA256 → SHA256 polos), orkestrasi penuh
+`generate_rollback_script()`.
+
+**2 gap validasi ditemukan** (bukan crash, tapi celah desain nyata):
+- **Nggak ada proteksi PID kritis sama sekali** — beda dari `harness.py`
+  yang hardblock PID ≤100, `remediator.py` bakal dengan senang hati generate
+  script yang isinya `kill -STOP 1` / `kill -9 1` (target PID 1/init) tanpa
+  penolakan apa pun. Script-nya emang nggak auto-execute, tapi tetap
+  berbahaya kalau dipercaya buta sama analis.
+- **Pengecekan "critical system path" cuma exact-match**, bukan prefix —
+  `/bin/bash` atau `/etc/passwd` lolos validasi (nggak dianggap "critical"),
+  padahal jelas file sistem kritis. Dampak praktisnya terbatas karena script
+  yang di-generate cuma pakai `pid`, bukan `file_path`, di command yang
+  dieksekusi — tapi klaim di komentar kodenya ("Never execute kill commands
+  targeting core OS paths") lebih kuat dari yang sebenarnya diimplementasi.
+
+Dua-duanya ditulis sebagai regression test eksplisit (`test_KNOWN_GAP_*`),
+bukan didiamkan.
+
+### ✅ `mirage.py` (17 test)
+Gate env var (pola sama kayak Module Registry), generate decoy Linux
+(fake `/etc/shadow` + SSH key, permission 0o600 diverifikasi) dan Windows
+(fake SAM hive + dokumen umpan), teardown dengan boundary check, **self-healing
+orphan sweeper** (dites nyata pakai subprocess asli buat kasus "PID masih
+hidup" vs "PID udah mati" — bukan cuma mock).
+
+**1 kelemahan teoretis dicatat** (bukan bug yang bisa dieksploitasi lewat
+API publik sekarang): boundary check di `teardown_hallucination` pakai
+`.startswith()` string biasa, bukan proper path-containment check — pola
+klasik yang rawan kalau ada folder "sibling" bernama mirip (misal
+`mirage_env_EVIL`). Nggak bisa dipicu lewat API publik saat ini (PID selalu
+di-cast ke integer, prefix folder cuma 2 pilihan tetap), tapi dicatat biar
+kalau kode ini di-refactor nanti, pola berbahayanya nggak ke-copy paste ke
+tempat yang beneran rawan.
+
+### Ringkasan Batch 2
+**37 test baru, 0 bug crash, 3 gap desain ditemukan & terdokumentasi**
+(2 di remediator, 1 di mirage — dua-duanya defense-in-depth issue, bukan
+lubang yang langsung bisa dieksploitasi lewat jalur normal).
+
+### ⏳ Belum dikerjakan (Batch 3 — modul susah)
+`library.py`, `sift_toolkit.py`, `ebpf_sensor.py`, `sandbox.py`
 
 ## Ringkasan sejauh ini
 
-- **61 test baru** (92/92 total termasuk Fase 1, semua lulus)
-- **0 bug baru** ditemukan di 5 modul yang udah dikerjakan
+- **98 test baru** (129/129 total termasuk Fase 1, semua lulus)
+- **0 bug crash baru**, **3 gap desain ditemukan & terdokumentasi** (2 di
+  `remediator.py`, 1 di `mirage.py`) — defense-in-depth, bukan lubang yang
+  langsung bisa dieksploitasi lewat jalur normal
 - Lint bersih, CI hijau
 
 ## Kerjaan administratif (bukan test-writing, tapi masuk Fase 2 sesuai arahan)
