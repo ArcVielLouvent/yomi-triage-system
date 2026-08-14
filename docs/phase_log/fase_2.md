@@ -122,8 +122,85 @@ tempat yang beneran rawan.
 (2 di remediator, 1 di mirage — dua-duanya defense-in-depth issue, bukan
 lubang yang langsung bisa dieksploitasi lewat jalur normal).
 
-### ⏳ Belum dikerjakan (Batch 3 — modul susah)
-`library.py`, `sift_toolkit.py`, `ebpf_sensor.py`, `sandbox.py`
+### ✅ `library.py` (32 test)
+Setup toko data (izin file 0o700/0o600, self-repair manifest korup), round-trip
+year-file + invalidasi cache LRU, migrasi format lama (list→dict), ekstraksi
+tahun dari CVE ID/tanggal publish, hash entry (buat dedup, ngecualiin field
+volatile), logika merge (added vs updated count), `query_cve` (deepcopy
+isolation), `analyze_artifact`, pipeline `_fetch_nvd_recent` end-to-end
+(HTTP+LZMA di-mock), hygiene thread background.
+
+**2 bug fungsional serius ditemukan, dua-duanya diperbaiki:**
+- **`lzma.LZMAFile(fileobj=...)`** — nama parameter itu **nggak ada** di API
+  `lzma` Python (yang bener `filename`, meski nerima file-like object juga).
+  Muncul di 2 lokasi. Akibatnya **sinkronisasi CVE dari NVD gagal total sejak
+  awal proyek**, diam-diam ketangkep `except Exception`. Diperbaiki di
+  keduanya.
+- **`analyze_artifact()` arah pengecekan substring kebalik** — nama artifact
+  (panjang) dicek sebagai substring DI DALAM teks deskripsi (pendek), bukan
+  sebaliknya. Cuma jalan kalau nama artifact persis CVE ID doang. Diperbaiki
+  dengan desain baru: exact-match CVE ID lewat regex (fast path, presisi),
+  `context_hints` tetap arah lama (memang udah benar), dan fallback
+  containment yang arahnya dibalik jadi benar.
+
+### ✅ `sift_toolkit.py` (25 test)
+Chokepoint bersama (`_validate_target_path`, `_validate_tool`, `_run_subprocess`,
+`_run_pipe`) dites pakai **subprocess sungguhan** (`echo`, `false`, `sleep`,
+binary nggak ada) — bukan mock, karena inti modul ini ya soal nanganin
+subprocess dengan aman. Plus sampel wrapper representatif (Volatility pslist
+end-to-end pakai fake binary di PATH, YARA "--" injection barrier, TSK icat
+binary-integrity, Scalpel flag ordering).
+
+**2 bug nyata ditemukan lewat testing berulang (bukan cuma sekali run), dua-duanya diperbaiki:**
+- **Pesan "timed out" nyaris nggak pernah muncul** — `_run_subprocess` nebak
+  timeout dari `returncode is None`, tapi `_stream_process_output` udah
+  nge-*reap* proses duluan sebelum balik, jadi `returncode` udah keisi -9.
+  Diperbaiki dengan flag `timed_out` eksplisit.
+- **Race condition nyata** (baru ketauan setelah run test 5x berulang —
+  gagal di test yang beda-beda tiap run, ciri khas race condition):
+  `process.poll()` dicek duluan sebelum baca pipe, jadi command cepat kayak
+  `echo` bisa kehilangan output-nya kalau proses udah selesai sebelum loop
+  sempat baca. Diperbaiki: loop nggak pernah keluar berdasar `poll()` lagi,
+  tapi berdasar EOF beneran di pipe. **Diverifikasi stabil 5x run berturut-turut
+  setelah fix**, dulu flaky.
+
+### ✅ `ebpf_sensor.py` (12 test)
+Kontrak singleton, fallback `bcc` nggak ke-install (beneran nggak ada di
+sandbox, jadi ini natural real test bukan simulasi), short-circuit "udah
+armed". **Logika deteksi ancaman** (bagian paling kritis) dites dengan cara
+nangkep callback `print_event` dari closure lewat mock `open_perf_buffer`,
+lalu panggil langsung pakai event palsu — akses `/etc/shadow` → SIGSTOP +
+2 ledger entry, shell kritis via execve → alert, filter false-positive
+(cmdline sendiri/`volatility`/`python`, path `sans_hackathon`), kegagalan
+SIGSTOP tetap ke-log meski containment gagal.
+
+Nggak ada bug baru — logika deteksinya solid.
+
+### ✅ `sandbox.py` (23 test)
+Validasi binary, containment read-only 0o400, **overlay mount OverlayFS
+beneran** (bukan mock — sandbox ini punya CAP_SYS_ADMIN, dibuktikan lewat
+probe manual dulu sebelum nulis test, dengan cleanup ketat di `finally`
+supaya nggak ada mount ketinggalan), guard root/OS buat mini-container,
+verifikasi command `unshare` nggak ada `-r` (klaim "prevent UID map escape"
+di docstring — **terbukti valid**), orkestrasi penuh `execute_resurrection`
+dan `_monitor_awakened_threat` (deploy decoy → timeout/kill → teardown →
+kunci evidence 0o500 → profiling → cleanup paksa).
+
+Nggak ada bug baru — modul ini defensif dan sesuai klaim dokumentasinya.
+
+### Ringkasan Batch 3
+**92 test baru, 4 bug fungsional nyata ditemukan & diperbaiki** (2 di
+`library.py` — satu di antaranya bikin fitur inti "auto-update CVE" nggak
+pernah jalan sejak awal proyek, dan satu bug desain matching yang saya putuskan
+sendiri arah perbaikannya sesuai instruksi; 2 di `sift_toolkit.py` — satu di
+antaranya race condition asli yang cuma ketauan lewat testing berulang).
+
+## Ringkasan Fase 2 total
+- **190 test baru** (221/221 total termasuk Fase 1, stabil 3x run berturut-turut)
+- **4 bug fungsional diperbaiki** (2 crash-adjacent, 1 fitur mati total sejak
+  awal proyek, 1 race condition), **3 gap desain terdokumentasi** (Batch 2)
+- Lint bersih, CI hijau
+- Semua 11 modul Lapisan 1 selesai diuji
 
 ## Ringkasan sejauh ini
 

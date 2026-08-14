@@ -8,7 +8,7 @@ keputusan arsitektur. Ditulis untuk dibaca tanpa perlu gali `git log` atau
 |------|--------|-----------|
 | [Fase 0](fase_0.md) | ✅ Selesai | Branching, CI/CD skeleton, struktur test, Module Registry |
 | [Fase 1](fase_1.md) | ✅ Selesai (merged, PR #1) | Unit test + benchmark Lapisan 0 (stamp, os_bridge, yomi_data) — 31 test, 3 crash bug diperbaiki |
-| [Fase 2](fase_2.md) | 🔄 Sedang berjalan | Unit test Lapisan 1 (11 modul) |
+| [Fase 2](fase_2.md) | ✅ Selesai (belum merge) | Unit test Lapisan 1 (11 modul), 92+98 test, 4 bug fungsional diperbaiki |
 | Fase 3 | ⏳ Belum mulai | Unit test Lapisan 2 (router, mcp_server, hunter, swarm, dossier, mind_reader, shadow_net, dashboard) |
 | Fase 4 | ⏳ Belum mulai | Integration/crucible test + benchmark harness sungguhan |
 | Fase 5 | ⏳ Belum mulai | README split (ramping vs dokumentasi teknis) |

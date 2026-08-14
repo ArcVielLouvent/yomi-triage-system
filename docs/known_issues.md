@@ -153,3 +153,62 @@ sessions or phases, and each entry says whether it's fixed yet.
     `test_teardown_boundary_check_documented_prefix_weakness`.
 
     Status: OPEN (defense-in-depth hardening, not urgent).
+
+## Fase 2 Batch 3 findings (library.py, sift_toolkit.py) — FIXED
+
+17. **`library.py`: `lzma.LZMAFile(fileobj=...)` uses a non-existent
+    keyword argument.** Python's `lzma.LZMAFile` API names this parameter
+    `filename` (which also accepts file-like objects) -- `fileobj` doesn't
+    exist. Present in 2 call sites (`_fetch_nvd_recent`,
+    `seed_full_nvd_archive`). This meant NVD CVE database sync has
+    silently failed with `TypeError` (caught by a broad
+    `except Exception`) on every single invocation since project
+    inception -- the core "auto-updating threat intelligence" feature has
+    never actually worked.
+
+    Status: **FIXED**. Both occurrences now pass the BytesIO object
+    positionally instead of via `fileobj=`.
+
+18. **`library.py`: `analyze_artifact()`'s keyword matching checked
+    substring containment backwards.** The full (often long, decorated)
+    `artifact_name` was checked as a substring INSIDE the short
+    "cve_id + description" text, which only succeeds when `artifact_name`
+    IS almost exactly the bare CVE ID. Any realistic filename (e.g.
+    `"suspicious_cve-2026-0006_dropper.exe"`) never matched, despite the
+    CVE-year regex correctly narrowing the search first.
+
+    Status: **FIXED**. Redesigned with two correctly-directed checks: (a)
+    a full CVE-ID pattern extracted from `artifact_name` gets a direct
+    O(1) dict lookup as a fast/precise path, (b) `context_hints` (short,
+    curated keywords) keep the original correct direction
+    (hint-in-description), (c) the extracted CVE ID is checked for
+    containment WITHIN `artifact_name`/hints as a fallback. Deduped via
+    `matched_cve_ids` to avoid double-counting.
+
+19. **`sift_toolkit.py`: `_run_subprocess`'s "timed out" error message was
+    effectively dead code.** It inferred a timeout from
+    `process.returncode is None`, but `_stream_process_output` already
+    reaps the just-killed process via `process.wait()` before returning
+    -- so `returncode` is essentially never still `None` by the time the
+    caller checks it. Callers got a generic `"tool returned -9"` message
+    instead of the intended `"execution timed out after Xs"` message.
+
+    Status: **FIXED**. `_stream_process_output` now returns an explicit
+    `timed_out` flag (3-tuple return) instead of inferring it from
+    `returncode`. Applied to both call sites (`_run_subprocess`,
+    `_run_pipe`).
+
+20. **`sift_toolkit.py`: genuine race condition in
+    `_stream_process_output`'s main loop.** `process.poll() is not None`
+    was checked FIRST every iteration, breaking immediately if the
+    process had already exited -- for fast commands (e.g. `echo`), the
+    child could finish before the loop ever attempted a single read,
+    discarding output still sitting unread in the OS pipe buffer.
+    Confirmed via 5x repeated local test runs: intermittent, different
+    tests failed each run (classic race-condition signature).
+
+    Status: **FIXED**. The loop no longer uses `poll()` as an exit
+    signal at all -- pipes are tracked in a set and only dropped on an
+    actual EOF (empty read), so buffered output is always drained
+    regardless of whether the process has already exited. Verified
+    stable across 5 consecutive full-suite runs post-fix.
