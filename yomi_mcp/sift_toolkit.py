@@ -73,12 +73,13 @@ class SiftArsenal:
 
     def _stream_process_output(
         self, process: subprocess.Popen, timeout: int = 60
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, bool]:
         deadline = time.time() + timeout
         stdout_chunks = []
         stderr_chunks = []
         stdout_len = 0
         stderr_len = 0
+        timed_out = False
 
         max_chars = 100000
 
@@ -88,24 +89,39 @@ class SiftArsenal:
         if process.stderr:
             self._set_non_blocking(process.stderr.fileno())
 
-        while True:
-            if process.poll() is not None:
-                break
+        # NOTE: this used to check `process.poll() is not None` as the
+        # FIRST thing every loop iteration, breaking out immediately if the
+        # process had already exited. That's a genuine race for fast
+        # commands (e.g. `echo`): the child can finish and its exit status
+        # becomes visible to poll() before this loop ever attempts a single
+        # read, discarding output still sitting unread in the OS pipe
+        # buffer. Confirmed via repeated test runs -- intermittent, exact
+        # tests that failed varied per run, classic race-condition
+        # signature. Fixed by never using poll() as an exit signal at all:
+        # pipes are tracked in a set and only dropped on an actual EOF
+        # (empty read), so the loop keeps draining buffered output
+        # regardless of whether the process has already exited.
+        open_streams = []
+        if process.stdout is not None:
+            open_streams.append(process.stdout)
+        if process.stderr is not None:
+            open_streams.append(process.stderr)
 
-            streams = []
-            if process.stdout is not None:
-                streams.append(process.stdout)
-            if process.stderr is not None:
-                streams.append(process.stderr)
-
-            if not streams:
-                break
-
-            ready, _, _ = select.select(streams, [], [], 0.1)
+        while open_streams:
+            ready, _, _ = select.select(open_streams, [], [], 0.1)
 
             if not ready:
                 if time.time() > deadline:
+                    # See the (now-corrected) note at the top of this
+                    # method's history: track timeout explicitly rather
+                    # than inferring it from a returncode that
+                    # process.wait() below overwrites moments later.
+                    timed_out = True
                     self._kill_process_group(process)
+                    break
+                if process.poll() is not None:
+                    # Process has exited AND select() found nothing ready
+                    # to read on this pass -- genuinely done, not a race.
                     break
                 continue
 
@@ -113,6 +129,11 @@ class SiftArsenal:
                 try:
                     chunk = pipe.read(4096)
                     if not chunk:
+                        # EOF on this pipe specifically -- stop selecting
+                        # on it, but keep draining any other still-open
+                        # pipe (e.g. stderr may still have data after
+                        # stdout hits EOF).
+                        open_streams.remove(pipe)
                         continue
 
                     if pipe is process.stdout and stdout_len < max_chars:
@@ -125,7 +146,9 @@ class SiftArsenal:
                         stderr_chunks.append(chunk[:remaining])
                         stderr_len += len(chunk[:remaining])
                 except IOError:
-                    # Ignore harmless EAGAIN errors when the pipe is temporarily empty
+                    # Harmless EAGAIN when the pipe is temporarily empty --
+                    # NOT a signal to stop selecting on it (unlike an
+                    # actual empty read, which is a real EOF).
                     continue
 
         try:
@@ -133,7 +156,7 @@ class SiftArsenal:
         except subprocess.TimeoutExpired:
             self._kill_process_group(process)
 
-        return "".join(stdout_chunks).strip(), "".join(stderr_chunks).strip()
+        return "".join(stdout_chunks).strip(), "".join(stderr_chunks).strip(), timed_out
 
     def _run_subprocess(
         self, command_list: list[str], tool_name: str, timeout: int = 60
@@ -149,9 +172,9 @@ class SiftArsenal:
                 start_new_session=True,
             )
 
-            stdout, stderr = self._stream_process_output(process, timeout)
+            stdout, stderr, timed_out = self._stream_process_output(process, timeout)
 
-            if process.returncode is None:
+            if timed_out or process.returncode is None:
                 self._kill_process_group(process)
                 return {
                     "status": "ERROR",
@@ -204,12 +227,19 @@ class SiftArsenal:
             if left.stdout is not None:
                 left.stdout.close()
 
-            stdout, stderr = self._stream_process_output(right, timeout)
+            stdout, stderr, timed_out = self._stream_process_output(right, timeout)
 
             try:
                 left.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 self._kill_process_group(left)
+
+            if timed_out:
+                return {
+                    "status": "ERROR",
+                    "tool": tool_name,
+                    "error": f"{tool_name} execution timed out after {timeout}s.",
+                }
 
             if right.returncode == 0:
                 return {
