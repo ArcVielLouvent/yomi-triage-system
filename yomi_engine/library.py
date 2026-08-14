@@ -362,7 +362,13 @@ class OmniLibrary:
         if not content:
             return False
         try:
-            with lzma.LZMAFile(fileobj=io.BytesIO(content)) as xz:
+            # NOTE: lzma.LZMAFile's parameter is `filename` (positional),
+            # NOT `fileobj` -- that keyword doesn't exist in the stdlib API
+            # and previously raised TypeError on every single call, silently
+            # swallowed by the except-Exception below. This meant NVD CVE
+            # sync has never worked at all since project inception. Fixed
+            # by passing the BytesIO object positionally instead.
+            with lzma.LZMAFile(io.BytesIO(content)) as xz:
                 payload = json.load(xz)
             added = self._merge_external_entries(
                 payload.get("vulnerabilities", []), origin_feed="NVD_RECENT"
@@ -396,7 +402,9 @@ class OmniLibrary:
                 )
                 if not content:
                     continue
-                with lzma.LZMAFile(fileobj=io.BytesIO(content)) as xz:
+                # See _fetch_nvd_recent's note above -- same fileobj->
+                # positional fix applies here.
+                with lzma.LZMAFile(io.BytesIO(content)) as xz:
                     payload = json.load(xz)
                 self._merge_external_entries(
                     payload.get("vulnerabilities", []),
@@ -430,15 +438,44 @@ class OmniLibrary:
                 "matches": [],
             }
 
-        search_terms = [artifact_name.strip().lower()] + [
-            str(h).lower() for h in (context_hints or [])
-        ]
+        # KNOWN BUG (fixed): the original implementation put the entire,
+        # often-long, possibly-decorated artifact_name into search_terms
+        # and checked `artifact_name in combined_text` -- i.e. whether the
+        # (long) artifact name was a substring INSIDE the (short) "cve_id +
+        # description" text. That only ever succeeds when artifact_name IS
+        # (almost) exactly the bare CVE ID -- any realistic filename like
+        # "suspicious_cve-2026-0006_dropper.exe" failed to match even
+        # though the CVE ID is clearly present, because the containment
+        # direction was backwards.
+        #
+        # Fix, two complementary directions depending on what's being
+        # matched against what:
+        #  1. A precise CVE ID substring extracted from artifact_name is
+        #     checked for containment WITHIN artifact_name/hints (i.e. "is
+        #     this known CVE ID mentioned in what we were given?") --
+        #     correct direction: short precise token, longer search text.
+        #  2. context_hints (typically short, curated keywords the caller
+        #     already chose deliberately, e.g. "ransomware") are checked
+        #     the original way, `hint in combined_text` -- that direction
+        #     was already correct for hints specifically, since hints are
+        #     the short side and combined_text (cve_id + description) is
+        #     the longer side being searched.
+        import re
+
+        search_context = " ".join(
+            [artifact_name.strip().lower()]
+            + [str(h).lower() for h in (context_hints or [])]
+        )
+        hint_terms = [str(h).lower() for h in (context_hints or [])]
+
         matches = []
+        matched_cve_ids = set()
         MAX_RESULTS = 3
 
         target_years = []
-        import re
-
+        cve_id_pattern = re.search(
+            r"cve[-_.\s]?(\d{4})[-_.\s]?(\d{4,})", artifact_name, re.IGNORECASE
+        )
         cve_pattern = re.search(
             r"cve[-_.\s]?(\d{4})[-_.\s]?", artifact_name, re.IGNORECASE
         )
@@ -452,13 +489,35 @@ class OmniLibrary:
 
         for year in target_years:
             year_store = self._load_year_file(year)
+
+            # Fast path: a full "CVE-YYYY-NNNN"-shaped substring was found
+            # in artifact_name -- try a direct, precise dict lookup first
+            # rather than relying on fuzzy matching at all.
+            if cve_id_pattern:
+                candidate_id = f"CVE-{cve_id_pattern.group(1)}-{cve_id_pattern.group(2)}".upper()
+                direct_hit = year_store.get(candidate_id)
+                if direct_hit and candidate_id.lower() not in matched_cve_ids:
+                    matches.append(copy.deepcopy(direct_hit))
+                    matched_cve_ids.add(candidate_id.lower())
+
+            if len(matches) >= MAX_RESULTS:
+                break
+
             for entry in year_store.values():
+                entry_cve_id = str(entry.get("cve_id", "")).lower()
+                if not entry_cve_id or entry_cve_id in matched_cve_ids:
+                    continue
+
                 combined_text = " ".join(
-                    [str(entry.get("cve_id", "")), str(entry.get("description", ""))]
+                    [entry_cve_id, str(entry.get("description", ""))]
                 ).lower()
 
-                if any(term in combined_text for term in search_terms):
+                cve_id_found_in_context = bool(entry_cve_id) and entry_cve_id in search_context
+                hint_found_in_description = any(term in combined_text for term in hint_terms)
+
+                if cve_id_found_in_context or hint_found_in_description:
                     matches.append(copy.deepcopy(entry))
+                    matched_cve_ids.add(entry_cve_id)
 
                     if len(matches) >= MAX_RESULTS:
                         break
