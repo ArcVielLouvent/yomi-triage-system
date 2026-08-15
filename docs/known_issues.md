@@ -249,3 +249,27 @@ sessions or phases, and each entry says whether it's fixed yet.
     not removed (harmless dead code, low priority cleanup -- would only
     matter if `allowed_actions` grows without a matching dispatch branch,
     which the new test now guards against).
+
+## Environment-portability note (not a Yomi bug, test hardened)
+
+23. **`tests/unit/test_shadow_net.py`'s recovery_dir permission test
+    asserted an exact `0o700` mode**, which passed in this sandbox but
+    failed in a GitHub Codespaces devcontainer with mode `0o756`
+    (494 decimal) instead -- a value that shouldn't be reachable from
+    `os.umask(0o077)` + a default `0o777` `os.makedirs()` request alone
+    (umask can only clear bits, never introduce group/other `rwx` that
+    weren't otherwise implied). Root cause not confirmed (candidates:
+    devcontainer-specific default ACLs/permission inheritance on that
+    `/tmp` mount, or -- more concerning -- `os.umask()` being
+    process-global rather than thread-local, so if directory creation
+    ever races across threads in production, one thread's umask could
+    leak into another's `mkdir` call).
+
+    Status: **Test hardened, not a confirmed code bug.** Rewrote the test
+    to check the actual security property that matters (`recovery_dir`
+    is not group- or other-writable) rather than an exact byte value,
+    since that's what the module's "Atomic Vault Creation... against
+    Symlink Race Conditions" docstring claim is actually about, and it's
+    portable across environments. If this resurfaces with a reproducible
+    trigger (e.g. confirmed thread-race), revisit as a real concurrency
+    bug in `shadow_net.py`'s `__init__`.

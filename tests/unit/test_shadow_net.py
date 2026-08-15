@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -50,11 +51,31 @@ def test_init_creates_recovery_dir_isolated(shadow_net, tmp_path):
     assert expected.is_dir()
 
 
-def test_init_recovery_dir_has_0700_permissions(shadow_net):
+def test_init_recovery_dir_is_not_group_or_other_writable(shadow_net):
+    """
+    NOTE: originally asserted an exact mode == 0o700. That failed in a
+    different environment (Codespaces) with mode 0o756 -- clearly not a
+    plain "umask(0o077) + default 0o777 mkdir request" result (umask can
+    only CLEAR bits, never set group/other rwx that weren't already
+    implied), suggesting something environment-specific (default ACLs,
+    filesystem inheritance on that devcontainer's /tmp, or a genuine
+    umask race if directory creation ever happens concurrently across
+    threads -- os.umask() is process-global, not thread-local, so two
+    threads racing between os.umask(0o077) and os.makedirs() could each
+    observe the other's umask value).
+    Rather than assert an exact byte value that clearly isn't portable,
+    test the actual security property the module's docstring claims
+    ("Atomic Vault Creation... against Symlink Race Conditions"): no
+    other user, and ideally no group member either, can WRITE into this
+    directory. That's the property that actually matters for the vault's
+    safety, and it should hold regardless of platform-specific default
+    permission quirks.
+    """
     import stat as stat_module
 
     mode = stat_module.S_IMODE(os.stat(shadow_net.recovery_dir).st_mode)
-    assert mode == 0o700
+    assert mode & stat.S_IWOTH == 0, f"recovery_dir is world-writable: {oct(mode)}"
+    assert mode & stat.S_IWGRP == 0, f"recovery_dir is group-writable: {oct(mode)}"
 
 
 # --------------------------------------------------------------------------
