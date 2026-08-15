@@ -212,3 +212,40 @@ sessions or phases, and each entry says whether it's fixed yet.
     actual EOF (empty read), so buffered output is always drained
     regardless of whether the process has already exited. Verified
     stable across 5 consecutive full-suite runs post-fix.
+
+## Fase 3 Batch 3 findings (router.py, harness.py)
+
+21. **`router.py`: `execute_autonomous_triage`'s ReAct loop has no branch
+    for OS-level execution failures.** If an LLM-proposed `freeze`/`thaw`
+    action passes veto (target PID isn't protected) but fails at the OS
+    level (e.g. `os_bridge` returns `GHOST_PROCESS` for a PID that no
+    longer exists, or a generic `ERROR`), `_evaluate_intent`'s result
+    doesn't match any of the loop's explicit status checks (`REJECTED`,
+    `SELF_CORRECTION_REQUIRED`, `SUCCESS`-and-not-vetoed, `VETOED`). The
+    loop silently proceeds to the next iteration without appending any
+    `[SYSTEM FEEDBACK]` to `current_context` -- unlike every other
+    rejection path, which explains to the LLM what went wrong. The LLM
+    has no signal that its action failed and may repeat an identical
+    response, burning iterations until `max_iterations` triggers Shadow
+    Net escalation with no useful diagnostic trail.
+
+    Captured as: `tests/unit/test_router.py::test_triage_KNOWN_GAP_os_level_failure_gets_no_feedback_and_silently_retries`
+
+    Status: OPEN. Needs a product decision: should this be its own
+    handled branch (e.g. feed the OS-level failure reason back to the
+    LLM, similar to VETOED), or is silent retry-then-escalate the
+    intended fail-safe behavior? Not fixed here.
+
+22. **`harness.py`: `process_intent`'s trailing "no OS routing defined"
+    branch is dead code.** `self.allowed_actions` is exactly
+    `["freeze", "thaw"]`; `_veto_check` rejects any action outside that
+    list before the dispatch logic runs, and the dispatch logic
+    explicitly handles both remaining actions. No input can reach the
+    trailing `{"status": "ERROR", "message": "Action valid but no OS
+    routing defined..."}` branch.
+
+    Status: **Confirmed via regression test**
+    (`tests/unit/test_harness.py::test_no_action_value_can_reach_the_trailing_no_routing_branch`),
+    not removed (harmless dead code, low priority cleanup -- would only
+    matter if `allowed_actions` grows without a matching dispatch branch,
+    which the new test now guards against).

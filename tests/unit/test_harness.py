@@ -218,3 +218,28 @@ def test_real_end_to_end_freeze_via_harness(harness):
     finally:
         proc.kill()
         proc.wait(timeout=5)
+
+
+# --------------------------------------------------------------------------
+# Dead code finding (discovered while writing router.py tests in Fase 3)
+# --------------------------------------------------------------------------
+
+def test_no_action_value_can_reach_the_trailing_no_routing_branch(harness):
+    """
+    DEAD CODE FINDING: process_intent()'s trailing branch
+    ('status': 'ERROR', 'Action valid but no OS routing defined in
+    Harness execution map.') is unreachable. self.allowed_actions is
+    exactly ["freeze", "thaw"] -- _veto_check() rejects (VETOES) any
+    action not in that list before the dispatch logic ever runs, and the
+    dispatch logic explicitly handles both "freeze" and "thaw". There is
+    no action value that can pass _veto_check but fail to match the
+    dispatch if/elif. This test enumerates every action allowed past veto
+    and confirms each one IS dispatched (never falls to the trailing
+    branch) -- if a future change adds a new allowed_actions entry without
+    a matching dispatch branch, this test will start failing loudly
+    instead of the gap staying silent.
+    """
+    for action in harness.allowed_actions:
+        payload = json.dumps({"action": action, "target_pid": 999999})
+        result = harness.process_intent(payload)
+        assert result.get("message") != "Action valid but no OS routing defined in Harness execution map."
