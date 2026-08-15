@@ -36,11 +36,39 @@ ekspektasi eviction log (dashboard).
 ### Ringkasan Batch 1
 **34 test baru, 0 bug baru di kode Yomi.**
 
+### ✅ Batch 2 — `hunter.py` (23 test), `swarm.py` (34 test)
+
+**`hunter.py`**: resolusi sumber forensik (env var override, fallback root
+POSIX), parsing timeline Plaso (word-boundary PID matching — dibuktikan
+`234` nggak salah match di dalam `812345`, kategorisasi event: logon,
+shell, credential access, persistence, keyword `MALICIOUS` universal,
+sorting kronologis, cap 5 event, truncation 500 char), parsing TSK
+(deteksi file dihapus/carved, dedup+cap), orkestrasi penuh
+`hunt_root_cause` (PID invalid, sumber forensik nggak ada, tool nggak
+tersedia). **Nggak ada bug baru.**
+
+**`swarm.py`**: sanitasi log (masking password/API key/Bearer token),
+klasifikasi IP eksternal vs private/loopback/multicast/link-local,
+ekstraksi IP & PID dari teks (dedup+sort), penguncian inode fisik
+(hardlink → fallback read-only kalau disk penuh → fallback copy kalau
+disk cukup — tiga jalur dites nyata pakai file asli), live network scan
+(mock `psutil.net_connections`), agent memory & network (orkestrasi
+Volatility/TShark), **verifikasi klaim "false positive immune C2
+detection"** — dibuktikan valid: string `http.host` polos (misal dari
+path file) TIDAK memicu alert, tapi `http.host == evil.com` (sintaks
+query asli) MEMICU. **Nggak ada bug baru.**
+
+1 bug di test saya sendiri ditemukan & diperbaiki (bukan di kode Yomi):
+assertion urutan kronologis ketipu header ringkasan yang nyebut tanggal
+duluan sebelum daftar event.
+
+### Ringkasan Batch 2
+**57 test baru, 0 bug baru di kode Yomi.**
+
 ### ⏳ Belum dikerjakan
-Batch 2: `hunter.py`, `swarm.py`
 Batch 3 (paling berat): `router.py`, `mcp_server.py`, `mind_reader.py`, `shadow_net.py`
 
 ## Ringkasan Fase 3 sejauh ini
-- **34 test baru** (255/255 total, stabil 3x run)
+- **91 test baru** (312/312 total, stabil 3x run)
 - **0 bug baru**
 - Lint bersih
