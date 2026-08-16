@@ -212,3 +212,70 @@ sessions or phases, and each entry says whether it's fixed yet.
     actual EOF (empty read), so buffered output is always drained
     regardless of whether the process has already exited. Verified
     stable across 5 consecutive full-suite runs post-fix.
+
+## Fase 3 Batch 3 findings (router.py, harness.py)
+
+21. **`router.py`: `execute_autonomous_triage`'s ReAct loop has no branch
+    for OS-level execution failures.** If an LLM-proposed `freeze`/`thaw`
+    action passes veto (target PID isn't protected) but fails at the OS
+    level (e.g. `os_bridge` returns `GHOST_PROCESS` for a PID that no
+    longer exists, or a generic `ERROR`), `_evaluate_intent`'s result
+    doesn't match any of the loop's explicit status checks (`REJECTED`,
+    `SELF_CORRECTION_REQUIRED`, `SUCCESS`-and-not-vetoed, `VETOED`). The
+    loop silently proceeds to the next iteration without appending any
+    `[SYSTEM FEEDBACK]` to `current_context` -- unlike every other
+    rejection path, which explains to the LLM what went wrong. The LLM
+    has no signal that its action failed and may repeat an identical
+    response, burning iterations until `max_iterations` triggers Shadow
+    Net escalation with no useful diagnostic trail.
+
+    Captured as: `tests/unit/test_router.py::test_triage_KNOWN_GAP_os_level_failure_gets_no_feedback_and_silently_retries`
+
+    Status: OPEN. Needs a product decision: should this be its own
+    handled branch (e.g. feed the OS-level failure reason back to the
+    LLM, similar to VETOED), or is silent retry-then-escalate the
+    intended fail-safe behavior? Not fixed here.
+
+22. **`harness.py`: `process_intent`'s trailing "no OS routing defined"
+    branch is dead code.** `self.allowed_actions` is exactly
+    `["freeze", "thaw"]`; `_veto_check` rejects any action outside that
+    list before the dispatch logic runs, and the dispatch logic
+    explicitly handles both remaining actions. No input can reach the
+    trailing `{"status": "ERROR", "message": "Action valid but no OS
+    routing defined..."}` branch.
+
+    Status: **Confirmed via regression test**
+    (`tests/unit/test_harness.py::test_no_action_value_can_reach_the_trailing_no_routing_branch`),
+    not removed (harmless dead code, low priority cleanup -- would only
+    matter if `allowed_actions` grows without a matching dispatch branch,
+    which the new test now guards against).
+
+## Real bug found via cross-environment testing (Codespaces), now fixed
+
+23. **`shadow_net.py`'s `__init__` relied solely on `os.umask(0o077)` to
+    secure `recovery_dir`'s permissions — insufficient on filesystems with
+    default POSIX ACLs.** Reported from a GitHub Codespaces devcontainer:
+    mode came out **`0o756` (world-writable, `S_IWOTH` set)**,
+    deterministically reproducible (same value across multiple runs, not
+    a race) — impossible to reach via `umask(0o077)` math alone (umask can
+    only clear bits, never introduce `rw-` for other). Root cause: per
+    POSIX, when a directory has a default ACL, new children inherit
+    permissions from that ACL and **umask is bypassed entirely** — some
+    Codespaces devcontainer filesystems apparently have such a default ACL
+    on the relevant mount.
+
+    **Verified real** (not environment noise) by reproducing the exact
+    failure mode locally: mocking `os.makedirs` to simulate an
+    ACL-override to `0o756`, confirming the *original* code would produce
+    a world-writable recovery vault under that condition.
+
+    Status: **FIXED.** `__init__` now calls `os.chmod(recovery_dir, 0o700)`
+    explicitly right after `os.makedirs()`, which is guaranteed to set the
+    exact permission regardless of umask/ACL interactions on any
+    filesystem — `chmod` doesn't go through umask calculation at all.
+    Verified the fix defeats the exact simulated ACL-override scenario
+    that reproduces the original bug. Test restored to an exact
+    `mode == 0o700` assertion (previously loosened to "not
+    group/other-writable" as a stop-gap before the real fix was
+    identified — that loosening is no longer needed now that the
+    permission is explicitly guaranteed).

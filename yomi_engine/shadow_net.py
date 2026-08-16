@@ -29,14 +29,23 @@ class ShadowNetProtocol:
         self.hook_lock = threading.Lock()
         self.active_hooks = {}
 
-        # Atomic Vault Creation via Umask
-        # Sets default permission to 0o700 at the EXACT millisecond of creation
+        # Atomic Vault Creation via Umask + explicit chmod
+        # NOTE: umask(0o077) alone is NOT sufficient on filesystems with
+        # default POSIX ACLs (confirmed via real-world testing: a GitHub
+        # Codespaces devcontainer produced mode 0o756 -- WORLD-WRITABLE --
+        # despite this exact umask). Per POSIX, a directory with a default
+        # ACL causes new children to inherit permissions from that ACL,
+        # bypassing umask calculation entirely. The umask call is kept as
+        # defense-in-depth for filesystems without default ACLs, but the
+        # explicit os.chmod() below is what actually guarantees the
+        # permission on any filesystem, ACL or not.
         old_umask = os.umask(0o077)
         try:
             self.recovery_dir = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "..", "yomi_data", "recovery")
             )
             os.makedirs(self.recovery_dir, exist_ok=True)
+            os.chmod(self.recovery_dir, 0o700)
         finally:
             os.umask(old_umask)  # Restore system umask immediately
 
