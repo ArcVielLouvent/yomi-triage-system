@@ -250,26 +250,32 @@ sessions or phases, and each entry says whether it's fixed yet.
     matter if `allowed_actions` grows without a matching dispatch branch,
     which the new test now guards against).
 
-## Environment-portability note (not a Yomi bug, test hardened)
+## Real bug found via cross-environment testing (Codespaces), now fixed
 
-23. **`tests/unit/test_shadow_net.py`'s recovery_dir permission test
-    asserted an exact `0o700` mode**, which passed in this sandbox but
-    failed in a GitHub Codespaces devcontainer with mode `0o756`
-    (494 decimal) instead -- a value that shouldn't be reachable from
-    `os.umask(0o077)` + a default `0o777` `os.makedirs()` request alone
-    (umask can only clear bits, never introduce group/other `rwx` that
-    weren't otherwise implied). Root cause not confirmed (candidates:
-    devcontainer-specific default ACLs/permission inheritance on that
-    `/tmp` mount, or -- more concerning -- `os.umask()` being
-    process-global rather than thread-local, so if directory creation
-    ever races across threads in production, one thread's umask could
-    leak into another's `mkdir` call).
+23. **`shadow_net.py`'s `__init__` relied solely on `os.umask(0o077)` to
+    secure `recovery_dir`'s permissions — insufficient on filesystems with
+    default POSIX ACLs.** Reported from a GitHub Codespaces devcontainer:
+    mode came out **`0o756` (world-writable, `S_IWOTH` set)**,
+    deterministically reproducible (same value across multiple runs, not
+    a race) — impossible to reach via `umask(0o077)` math alone (umask can
+    only clear bits, never introduce `rw-` for other). Root cause: per
+    POSIX, when a directory has a default ACL, new children inherit
+    permissions from that ACL and **umask is bypassed entirely** — some
+    Codespaces devcontainer filesystems apparently have such a default ACL
+    on the relevant mount.
 
-    Status: **Test hardened, not a confirmed code bug.** Rewrote the test
-    to check the actual security property that matters (`recovery_dir`
-    is not group- or other-writable) rather than an exact byte value,
-    since that's what the module's "Atomic Vault Creation... against
-    Symlink Race Conditions" docstring claim is actually about, and it's
-    portable across environments. If this resurfaces with a reproducible
-    trigger (e.g. confirmed thread-race), revisit as a real concurrency
-    bug in `shadow_net.py`'s `__init__`.
+    **Verified real** (not environment noise) by reproducing the exact
+    failure mode locally: mocking `os.makedirs` to simulate an
+    ACL-override to `0o756`, confirming the *original* code would produce
+    a world-writable recovery vault under that condition.
+
+    Status: **FIXED.** `__init__` now calls `os.chmod(recovery_dir, 0o700)`
+    explicitly right after `os.makedirs()`, which is guaranteed to set the
+    exact permission regardless of umask/ACL interactions on any
+    filesystem — `chmod` doesn't go through umask calculation at all.
+    Verified the fix defeats the exact simulated ACL-override scenario
+    that reproduces the original bug. Test restored to an exact
+    `mode == 0o700` assertion (previously loosened to "not
+    group/other-writable" as a stop-gap before the real fix was
+    identified — that loosening is no longer needed now that the
+    permission is explicitly guaranteed).
