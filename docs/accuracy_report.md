@@ -3,6 +3,19 @@
   <h2>Accuracy & Evidence Integrity Report</h2>
 </div>
 
+> **Provenance note (added Fase 5):** this report documents a manual,
+> observed live-demo session on a SANS SIFT Workstation during the
+> original hackathon submission -- it is not output from
+> `./run_tests.sh` or any automated CI job. The specific concrete claims
+> below (VETO message wording, iteration cap, CVE mimicry ID format)
+> were cross-checked against the current codebase while writing
+> [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still hold true
+> as of Fase 5. For the automated, currently-passing test suite and its
+> real numbers, see [`docs/usage.md`](usage.md#3-performance--scalability-metrics)
+> and run `./run_tests.sh` yourself. For known gaps and their current
+> fix status (including the dossier-bias limitation described in
+> Section 3 below), see [`docs/known_issues.md`](known_issues.md).
+
 **Target Environment:** SANS SIFT Workstation
 **Architecture Type:** Persistent Loop / Custom MCP Integration
 
@@ -53,7 +66,7 @@ To validate our claims regarding the immutable audit trail, below is an exact, u
 
 ---
 
-**Execution Velocity:** Addressing the hackathon's core "Speed Problem," Yomi's eBPF sensor and autonomous loop execute containment and analysis at machine speed. Cryptographic telemetry confirms second reactive latencies (e.g., Latency Benchmark: ~0.82s) without sacrificing constraint integrity.
+**Execution Velocity:** Addressing the hackathon's core "Speed Problem," Yomi's eBPF sensor and autonomous loop execute containment and analysis at machine speed. Cryptographic telemetry confirms second-scale reactive latencies (the exact incident below: ~3.0s) without sacrificing constraint integrity. Individual latencies vary by incident type and hardware -- see the ledger snippet below for one concrete, unedited example rather than treating any single number as a fixed guarantee.
 
 ```json
 {

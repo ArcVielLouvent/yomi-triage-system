@@ -381,7 +381,22 @@ class ImmutableStamp:
                 with open(self.checkpoint_file, "rb") as chk:
                     stored_hash = chk.read().decode("utf-8")
                 if stored_hash != checkpoint_hash:
-                    print(f"[YOMI-AUDIT] Checkpoint mismatch detected. Updating...")
+                    # [FIXED] known_issues.md #13: this branch fires on
+                    # every normal boot where the ledger has advanced
+                    # since the checkpoint file was last written (i.e.
+                    # any time record_action() ran since the last
+                    # startup) -- it is expected, routine catch-up, not a
+                    # tamper signal. Actual tamper detection lives in
+                    # verify_soc_checkpoint()'s HMAC attestation check.
+                    # Wording is deliberately non-alarming so operators
+                    # don't habituate to ignoring what used to read like
+                    # a security alert on every restart.
+                    print(
+                        "[YOMI-AUDIT] Checkpoint routine update: ledger has "
+                        "new entries since the last checkpoint (expected on "
+                        "normal restart). Re-anchoring checkpoint to the "
+                        "current ledger state."
+                    )
             with open(self.checkpoint_file, "wb") as chk:
                 chk.write(checkpoint_hash.encode("utf-8"))
             self._secure_path_permissions(self.checkpoint_file, 0o600)
