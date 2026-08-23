@@ -349,32 +349,19 @@ def test_triage_self_corrects_on_high_doubt_then_succeeds(router, monkeypatch):
     assert call_count["n"] == 2
 
 
-def test_triage_KNOWN_GAP_os_level_failure_gets_no_feedback_and_silently_retries(router, monkeypatch):
+def test_triage_os_level_failure_gets_system_feedback_and_can_recover(router, monkeypatch):
     """
-    KNOWN GAP: execute_autonomous_triage's if-chain explicitly handles
-    "REJECTED", "SELF_CORRECTION_REQUIRED", "SUCCESS"-and-not-vetoed, and
-    "VETOED" -- but harness.process_intent() can also return whatever
-    os_bridge.cryogenic_freeze()/thaw_process() returns for a LEGITIMATELY
-    APPROVED action that fails at the OS level (e.g. status="GHOST_PROCESS"
-    for a PID that no longer exists, or status="ERROR" for some other OS
-    failure). Neither of those matches any branch in the if-chain, so the
-    loop silently falls through to the next iteration WITHOUT appending
-    any [SYSTEM FEEDBACK] to current_context -- unlike every other
-    rejection path (REJECTED, SELF_CORRECTION_REQUIRED, VETOED all give
-    the LLM a reason). The LLM has no way to know its freeze attempt
-    failed and may repeat the identical response next iteration, burning
-    through max_iterations with no useful signal.
+    FIXED (known_issues.md #21): harness.process_intent() can return
+    whatever os_bridge.cryogenic_freeze()/thaw_process() returns for a
+    LEGITIMATELY APPROVED action that fails at the OS level (e.g.
+    status="GHOST_PROCESS" for a PID that no longer exists, or
+    status="ERROR" for some other OS failure). execute_autonomous_triage
+    now has an explicit fallback branch for exactly this case: it appends
+    a [SYSTEM FEEDBACK] entry describing the OS-level status/reason to
+    current_context (matching every other rejection path -- REJECTED,
+    SELF_CORRECTION_REQUIRED, VETOED) instead of silently retrying with
+    no signal at all.
     """
-    monkeypatch.setattr(router.llm_gateway, "generate_intent", lambda ctx: VALID_INTENT_JSON)
-    monkeypatch.setattr(
-        router.harness, "process_intent",
-        lambda payload: {"status": "GHOST_PROCESS", "reason": "PID no longer exists."},
-    )
-
-    result = router.execute_autonomous_triage("context")
-    # Falls through all 3 iterations with identical unhelpful context,
-    # eventually escalates -- documents current (gap-y) behavior.
-    assert result["status"] == "ESCALATED_TO_SHADOW_NET"
     call_contexts = []
 
     def fake_generate(ctx):
@@ -388,15 +375,42 @@ def test_triage_KNOWN_GAP_os_level_failure_gets_no_feedback_and_silently_retries
     def fake_process_intent(payload):
         harness_calls["n"] += 1
         if harness_calls["n"] == 1:
-            return {"status": "VETOED", "message": "PID 5000 is protected."}
+            return {"status": "GHOST_PROCESS", "reason": "PID no longer exists."}
         return {"status": "SUCCESS", "action": "FROZEN"}
 
     monkeypatch.setattr(router.harness, "process_intent", fake_process_intent)
 
     result = router.execute_autonomous_triage("context")
+
+    # Recovers on the second iteration instead of burning all attempts.
     assert result["status"] == "SUCCESS"
-    # Second call's context must include feedback about the veto.
-    assert "vetoed" in call_contexts[1].lower()
+    assert len(call_contexts) == 2
+
+    # The second call's context must carry concrete feedback about the
+    # OS-level failure -- status, reason, and an explicit instruction --
+    # not just fall through silently.
+    second_context = call_contexts[1].lower()
+    assert "system feedback" in second_context
+    assert "ghost_process" in second_context
+    assert "pid no longer exists" in second_context
+
+
+def test_triage_persistent_os_level_failure_eventually_escalates(router, monkeypatch):
+    """
+    If the OS-level failure never clears (e.g. the PID never comes back),
+    the loop still exhausts max_iterations and escalates to Shadow Net --
+    the fallback branch gives the LLM a chance to self-correct, it
+    doesn't force a different outcome if the underlying condition
+    persists.
+    """
+    monkeypatch.setattr(router.llm_gateway, "generate_intent", lambda ctx: VALID_INTENT_JSON)
+    monkeypatch.setattr(
+        router.harness, "process_intent",
+        lambda payload: {"status": "GHOST_PROCESS", "reason": "PID no longer exists."},
+    )
+
+    result = router.execute_autonomous_triage("context")
+    assert result["status"] == "ESCALATED_TO_SHADOW_NET"
 
 
 def test_triage_exhausts_iterations_and_escalates_to_shadow_net(router, monkeypatch):

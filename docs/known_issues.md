@@ -109,6 +109,25 @@ sessions or phases, and each entry says whether it's fixed yet.
     at all. Flagged as the top coverage priority for whichever phase next
     touches `stamp.py`.
 
+    Status: **FIXED (Fase 5).** Coverage raised from 54% to 89% via
+    `tests/unit/test_stamp_coverage.py` (45 new tests): all KMS provider
+    dispatch paths, Vault (flat + KV-v2 nested response shapes, custom
+    field name, request failure), AWS Secrets Manager (`SecretString` and
+    `SecretBinary`, missing `boto3`, client failure), ephemeral
+    PBKDF2 key derivation (env-var password, missing password, empty
+    password, salt persistence), `_backup_corrupted_ledger` +
+    `cleanup_corrupt_backups` (including the env-flag-triggered path),
+    `_create_or_verify_checkpoint`, `verify_soc_checkpoint` (valid,
+    missing signature, tampered, read-error), the ledger-corruption ->
+    backup -> reinit round trip, and the legacy (non-compact JSON) hash
+    fallback in `_verify_ledger`. All external calls (`requests`,
+    `boto3`) are mocked; nothing here makes a real network call. The
+    remaining 11% is almost entirely defensive `except OSError: pass`
+    blocks around `os.chmod` calls that are impractical to trigger
+    without mocking the OS call to fail for no functional reason -- not
+    considered worth chasing further. See also #24 below, a real design
+    nuance this test-writing surfaced in `cleanup_corrupt_backups`.
+
 13. **`_create_or_verify_checkpoint()` prints "Checkpoint mismatch
     detected. Updating..." on every normal ledger write since the last
     checkpoint** -- this is expected behavior (checkpoint just needs to
@@ -119,6 +138,14 @@ sessions or phases, and each entry says whether it's fixed yet.
     "verification failure" in the log wording. Not fixed here (behavior
     change, not test-writing); flagged for whoever next touches this
     function.
+
+    Status: **FIXED (Fase 5).** Message changed to "Checkpoint routine
+    update: ledger has new entries since the last checkpoint (expected on
+    normal restart). Re-anchoring checkpoint to the current ledger
+    state." Genuine tamper detection is unchanged -- it lives entirely in
+    `verify_soc_checkpoint()`'s HMAC attestation check, which this
+    function does not touch. Regression test:
+    `tests/unit/test_stamp_coverage.py::test_checkpoint_routine_update_on_ledger_advance`.
 
 ## Fase 2 Batch 2 findings (remediator.py, mirage.py)
 
@@ -229,12 +256,21 @@ sessions or phases, and each entry says whether it's fixed yet.
     response, burning iterations until `max_iterations` triggers Shadow
     Net escalation with no useful diagnostic trail.
 
-    Captured as: `tests/unit/test_router.py::test_triage_KNOWN_GAP_os_level_failure_gets_no_feedback_and_silently_retries`
+    Captured as: `tests/unit/test_router.py::test_triage_os_level_failure_gets_system_feedback_and_can_recover`
 
-    Status: OPEN. Needs a product decision: should this be its own
-    handled branch (e.g. feed the OS-level failure reason back to the
-    LLM, similar to VETOED), or is silent retry-then-escalate the
-    intended fail-safe behavior? Not fixed here.
+    Status: **FIXED (Fase 5).** Added an explicit fallback branch after
+    the `VETOED` check: any status that isn't `REJECTED`,
+    `SELF_CORRECTION_REQUIRED`, `SUCCESS`-and-not-vetoed, or `VETOED` now
+    appends a `[SYSTEM FEEDBACK]` entry to `current_context` with the
+    status and reason (checking both `message` and `reason` keys, since
+    `os_bridge` uses `reason` while the harness's own veto message uses
+    `message`), then `continue`s to let the LLM retry with that
+    information. Two tests cover this: one confirms recovery when the
+    condition clears on the next iteration
+    (`test_triage_os_level_failure_gets_system_feedback_and_can_recover`),
+    and one confirms it still escalates to Shadow Net rather than looping
+    forever if the condition never clears
+    (`test_triage_persistent_os_level_failure_eventually_escalates`).
 
 22. **`harness.py`: `process_intent`'s trailing "no OS routing defined"
     branch is dead code.** `self.allowed_actions` is exactly
@@ -279,3 +315,38 @@ sessions or phases, and each entry says whether it's fixed yet.
     group/other-writable" as a stop-gap before the real fix was
     identified — that loosening is no longer needed now that the
     permission is explicitly guaranteed).
+
+## Fase 5 findings (stamp.py coverage work)
+
+24. **`yomi_audit/stamp.py`'s `cleanup_corrupt_backups(retain_last=N)`
+    counts individual files, not incidents.** Each call to
+    `_backup_corrupted_ledger` writes *two* files -- the `.jsonl` copy of
+    the corrupted ledger, and a `.metadata.json` sidecar written
+    immediately after it. `cleanup_corrupt_backups` lists every file
+    whose name starts with the backup prefix, sorts that flat list by
+    mtime, and retains the first `retain_last` entries -- treating the
+    `.jsonl` and its `.metadata.json` as two independent, unrelated
+    files rather than one paired incident. So `retain_last=1` does not
+    mean "keep the most recent full incident"; it means "keep the single
+    most-recently-modified file on disk", which in practice is always
+    the `.metadata.json` (written after its `.jsonl` pair). The result:
+    `retain_last=1` can leave a lone `.metadata.json` on disk with no
+    matching `.jsonl` backup beside it.
+
+    This is not data loss of the *ledger itself* (the live ledger and
+    its HMAC chain are untouched -- this only affects retention of
+    corruption-recovery backups) and not exploitable by an attacker, but
+    it means the retention guarantee implied by the parameter name
+    doesn't hold, and an operator relying on `retain_last=1` "for safety"
+    could end up with less than they expect if they ever need to inspect
+    a backup after a corruption event.
+
+    Captured as:
+    `tests/unit/test_stamp_coverage.py::test_cleanup_corrupt_backups_retain_last_counts_files_not_incidents`
+
+    Status: OPEN. Straightforward fix would be to group files by their
+    shared incident prefix (everything before `.jsonl`/`.metadata.json`)
+    before sorting/retaining, so a `.jsonl` and its `.metadata.json`
+    are always kept or deleted together. Not fixed here (found while
+    writing coverage tests for #12, not itself a test-writing task);
+    flagged for whoever next touches this function.
