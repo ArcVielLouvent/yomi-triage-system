@@ -27,6 +27,6 @@ semua ini harus sudah beres — bukan opsional, bukan nyusul belakangan:
 | 0-1 | `scripts/create_known_issues.sh` | 13 (#1-13) |
 | 2 | `scripts/create_known_issues_batch2_3.sh` | 7 (#14-20) |
 | 3 | `scripts/create_known_issues_fase3.sh` | 2 (#21-22) |
-| 5 | `scripts/create_known_issues_fase5.sh` | 1 baru (#24) + 3 ditutup (#12, #13, #21) |
+| 5 | `scripts/create_known_issues_fase5.sh` | 1 baru (#24) + 5 ditutup (#12, #13, #14, #15, #21) |
 
-Total sampai Fase 5: **23 temuan open/tercatat**, **1 temuan baru (#24)**, GitHub Issues #14, #15, #23 ditutup.
+Total sampai Fase 5: **24 temuan tercatat**, **1 temuan baru (#24)**, **5 gerbang wajib FIXED (#12, #13, #14, #15, #21)** -- semua 4 gerbang pra-Fase 6 sekarang tertutup. *(`scripts/create_known_issues_fase5.sh` perlu di-update untuk menutup #14/#15 remediator.py juga -- nomor GitHub issue-nya belum dikonfirmasi, script saat ini baru menutup 3 dari 5.)*

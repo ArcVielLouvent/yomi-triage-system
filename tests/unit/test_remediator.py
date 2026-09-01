@@ -84,34 +84,86 @@ def test_valid_payload_passes(reverser, monkeypatch):
     assert valid is True
 
 
-# --- Documented gaps (regression tests for CURRENT behavior) --------------
+# --- Fixed gaps (regression tests for the FIXED behavior) -----------------
 
-def test_KNOWN_GAP_no_critical_pid_protection(reverser, monkeypatch):
+def test_low_numbered_pid_is_now_protected(reverser, monkeypatch):
     """
-    KNOWN GAP: remediator.py has no equivalent of harness.py's PID<=100
-    hardblock. A payload targeting PID 1 (init) currently passes
-    validation. The generated script isn't auto-executed (a human/other
-    system component would need to run it), but nothing here stops one
-    from being generated. If this is ever fixed, this test should start
-    failing and needs to be rewritten to assert the new protective
-    behavior.
+    FIXED (known_issues.md #14): mirrors harness.py's PID<=100 hardblock.
+    A payload targeting PID 1 (init) must now be rejected before it ever
+    reaches script generation.
     """
     monkeypatch.setattr("os.path.realpath", lambda p: p)
     valid, reason = reverser._validate_payload({"pid": 1, "file_path": "/tmp/x"})
-    assert valid is True  # documents the gap, does not endorse it
+    assert valid is False
+    assert "protected" in reason.lower() or "100" in reason
 
 
-def test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix(reverser, monkeypatch):
+def test_pid_exactly_100_is_still_protected(reverser, monkeypatch):
+    monkeypatch.setattr("os.path.realpath", lambda p: p)
+    valid, _ = reverser._validate_payload({"pid": 100, "file_path": "/tmp/x"})
+    assert valid is False
+
+
+def test_pid_101_is_not_blocked_by_the_low_pid_rule(reverser, monkeypatch):
+    monkeypatch.setattr("os.path.realpath", lambda p: p)
+    valid, _ = reverser._validate_payload({"pid": 101, "file_path": "/tmp/x"})
+    assert valid is True
+
+
+def test_critical_path_containment_now_blocks_files_inside_protected_dirs(reverser, monkeypatch):
     """
-    KNOWN GAP: "/bin/bash" and "/etc/passwd" are files INSIDE the blocked
-    directories, but the check only blocks exact matches to the bare
-    directory strings themselves ("/bin", "/etc"), not paths within them.
+    FIXED (known_issues.md #15): the check now uses real path containment
+    (pathlib parent comparison), not an exact match against the bare
+    directory string. "/bin/bash" and "/etc/passwd" -- files INSIDE the
+    blocked directories -- must now be rejected too.
     """
     monkeypatch.setattr("os.path.realpath", lambda p: p)
-    valid, reason = reverser._validate_payload({"pid": 5000, "file_path": "/bin/bash"})
-    assert valid is True  # passes validation despite being a core system binary
 
-    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/etc/passwd"})
+    valid, reason = reverser._validate_payload({"pid": 5000, "file_path": "/bin/bash"})
+    assert valid is False
+    assert "critical system path" in reason.lower()
+
+    valid2, reason2 = reverser._validate_payload({"pid": 5000, "file_path": "/etc/passwd"})
+    assert valid2 is False
+    assert "critical system path" in reason2.lower()
+
+    valid3, _ = reverser._validate_payload({"pid": 5000, "file_path": "/usr/local/bin/tool"})
+    assert valid3 is False
+
+
+def test_critical_path_containment_does_not_repeat_mirage_startswith_bug(reverser, monkeypatch):
+    """
+    The fix for #15 must use real path containment, not string
+    .startswith() -- the same class of bug already flagged for
+    mirage.py's boundary check (known_issues.md #16/#18).
+    "/etcetera/file" and "/binfoo" share a string PREFIX with "/etc" and
+    "/bin" but are NOT inside those directories, and must still pass.
+    """
+    monkeypatch.setattr("os.path.realpath", lambda p: p)
+
+    valid, _ = reverser._validate_payload({"pid": 5000, "file_path": "/etcetera/file"})
+    assert valid is True
+
+    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/binfoo/malware"})
+    assert valid2 is True
+
+
+def test_root_path_is_still_exact_match_only_not_containment(reverser, monkeypatch):
+    """
+    "/" is deliberately kept as an EXACT match, not path containment --
+    every absolute path is technically "under" "/", so treating "/" as a
+    containment boundary would reject every single payload. Only a
+    payload whose resolved path IS "/" itself gets blocked.
+    """
+    monkeypatch.setattr("os.path.realpath", lambda p: p)
+
+    valid, reason = reverser._validate_payload({"pid": 5000, "file_path": "/"})
+    assert valid is False
+    assert "critical system path" in reason.lower()
+
+    # A normal, unrelated absolute path must NOT be blocked just because
+    # it's technically "under root".
+    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/tmp/malware.bin"})
     assert valid2 is True
 
 

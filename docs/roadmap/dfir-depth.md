@@ -1,7 +1,8 @@
 # Roadmap: Kedalaman DFIR ("Sedalam Palung Mariana")
 
 **Status:** Visi resmi, belum mulai dikerjakan. Ditulis Fase 4, dieksekusi
-setelah Fase 6 (Release + KuroTech landing page) selesai.
+setelah Fase 6 (Guardian Orchestrator + Module Registry, lalu Release +
+KuroTech landing page) selesai.
 
 ## Latar belakang
 

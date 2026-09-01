@@ -156,7 +156,16 @@ sessions or phases, and each entry says whether it's fixed yet.
     a regression test (`test_KNOWN_GAP_no_critical_pid_protection` in
     `tests/unit/test_remediator.py`).
 
-    Status: OPEN.
+    Status: **FIXED (Fase 6 prep).** `_validate_payload` now rejects any
+    `pid <= 100` before proceeding, mirroring `harness.py`'s hardblock.
+    Deliberately does NOT add `harness.py`'s deeper psutil-based
+    "protect on `NoSuchProcess`" check -- `remediator.py`'s whole design
+    intent is to keep generating rollback scripts when the PID/file is
+    already gone (fileless malware self-deletes), so failing safe on a
+    missing PID would defeat that purpose. Regression tests:
+    `tests/unit/test_remediator.py::test_low_numbered_pid_is_now_protected`,
+    `::test_pid_exactly_100_is_still_protected`,
+    `::test_pid_101_is_not_blocked_by_the_low_pid_rule`.
 
 15. **`remediator.py`'s "critical system path" check is an exact match, not
     a prefix check.** `/bin/bash` and `/etc/passwd` pass validation despite
@@ -167,7 +176,19 @@ sessions or phases, and each entry says whether it's fixed yet.
     protection than it actually provides. Captured as
     `test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix`.
 
-    Status: OPEN.
+    Status: **FIXED (Fase 6 prep).** Switched to real path containment
+    via `pathlib` (resolved path equals the critical dir, or the
+    critical dir appears in `resolved.parents`) instead of an exact
+    string match -- deliberately NOT implemented as `.startswith()`,
+    which would repeat the exact class of bug flagged in #16/#18 below
+    for `mirage.py` (`.startswith("/etc")` also wrongly matches
+    `/etcetera/file`). `/` is kept as an EXACT match only, not
+    containment -- every absolute path is technically "under" `/`, so
+    treating it as a containment boundary would reject everything.
+    Regression tests:
+    `tests/unit/test_remediator.py::test_critical_path_containment_now_blocks_files_inside_protected_dirs`,
+    `::test_critical_path_containment_does_not_repeat_mirage_startswith_bug`,
+    `::test_root_path_is_still_exact_match_only_not_containment`.
 
 16. **`mirage.py`'s `teardown_hallucination` boundary check uses string
     `.startswith()`, not proper path containment** -- theoretically

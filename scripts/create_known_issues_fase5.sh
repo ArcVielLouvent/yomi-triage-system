@@ -2,18 +2,19 @@
 #
 # create_known_issues_fase5.sh — GitHub issue housekeeping for Fase 5.
 #
-# Fase 5 covers: README split, and the pre-Fase-6 gate items #12 (stamp.py
-# coverage), #13 (checkpoint mismatch wording), and #21 (router.py OS-level
-# failure feedback) -- all three FIXED. It also surfaced one new open
-# finding, #24 (cleanup_corrupt_backups retain_last), while writing the
-# coverage tests for #12.
+# Fase 5 covers: README split, and all FOUR pre-Fase-6 gate items --
+# #12 (stamp.py coverage), #13 (checkpoint mismatch wording), #14
+# (remediator.py critical-PID protection), #15 (remediator.py path
+# containment), and #21 (router.py OS-level failure feedback) -- all
+# FIXED. It also surfaced one new open finding, #24 (cleanup_corrupt_backups
+# retain_last), while writing the coverage tests for #12.
 #
 # This script does two things:
 #   1. Creates ONE new GitHub issue for #24.
-#   2. Closes the three GitHub issues that correspond to known_issues.md
-#      #12, #13, #21 (GitHub issue numbers are known_issues.md number + 2,
-#      per the existing offset in this repo: #14, #15, #23), each with a
-#      closing comment pointing at the fix.
+#   2. Closes the five GitHub issues that correspond to known_issues.md
+#      #12, #13, #14, #15, #21 (GitHub issue numbers are known_issues.md
+#      number + 2, per the existing offset in this repo: #14, #15, #16,
+#      #17, #23), each with a closing comment pointing at the fix.
 #
 # Run this ONCE, after create_known_issues_fase3.sh has already been run.
 #
@@ -57,6 +58,8 @@ echo "NOTE: adjust these numbers if your GitHub issue numbering differs from the
 for gh_num_and_msg in \
   "14:Fixed in Fase 5 -- coverage raised from 54%% to 89%% via tests/unit/test_stamp_coverage.py (45 new tests). See docs/known_issues.md #12 for the full breakdown." \
   "15:Fixed in Fase 5 -- log message reworded to distinguish routine checkpoint catch-up from genuine tamper detection. See docs/known_issues.md #13." \
+  "16:Fixed in Fase 5 -- _validate_payload now rejects any pid <= 100 before proceeding, mirroring harness.py's hardblock. Does not add harness.py's psutil-based NoSuchProcess fail-safe, since remediator.py must keep working for self-deleted (fileless) malware PIDs. See docs/known_issues.md #14." \
+  "17:Fixed in Fase 5 -- critical-path check now uses real pathlib containment (resolved path in critical dir's parents) instead of exact string match, without repeating the mirage.py .startswith() bug (#16/#18). See docs/known_issues.md #15." \
   "23:Fixed in Fase 5 -- execute_autonomous_triage now has an explicit fallback branch that feeds [SYSTEM FEEDBACK] to the LLM for any OS-level failure status. See docs/known_issues.md #21."
 do
   gh_num="${gh_num_and_msg%%:*}"
