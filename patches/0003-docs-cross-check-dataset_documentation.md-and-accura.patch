@@ -1,0 +1,84 @@
+From a33ab79f9c5f1cee749e62f4ec6141bd414026b8 Mon Sep 17 00:00:00 2001
+From: Yomi Session <kurotech@yomi.local>
+Date: Mon, 24 Aug 2026 03:39:41 +0000
+Subject: [PATCH 3/7] docs: cross-check dataset_documentation.md and
+ accuracy_report.md against current code
+
+Verified concrete claims against actual source (not assumed):
+- VETO_ENGAGED message wording matches harness.py exactly
+- max_iterations=3 default matches router.py
+- CVE-{year}-YOMI{pid} mimicry format matches mind_reader.py
+- All CLI entry points (swarm.py, hunter.py, mind_reader.py, dossier.py)
+  have matching __main__ blocks accepting the documented arguments
+- weaver.py dossier-bias claim still accurate (known_issues.md #7 still OPEN)
+
+Fixed one real internal inconsistency in accuracy_report.md: prose said
+~0.82s execution velocity, the JSON snippet directly below it showed
+3.0025s. Aligned prose to the actual example given.
+
+Added provenance notes to both files clarifying these are manual
+hackathon-demo records, not ./run_tests.sh output, with links to
+docs/known_issues.md and docs/usage.md for the current automated state.
+---
+ docs/accuracy_report.md       | 15 ++++++++++++++-
+ docs/dataset_documentation.md | 11 +++++++++++
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/docs/accuracy_report.md b/docs/accuracy_report.md
+index 00baed8..7a3789c 100644
+--- a/docs/accuracy_report.md
++++ b/docs/accuracy_report.md
+@@ -3,6 +3,19 @@
+   <h2>Accuracy & Evidence Integrity Report</h2>
+ </div>
+ 
++> **Provenance note (added Fase 5):** this report documents a manual,
++> observed live-demo session on a SANS SIFT Workstation during the
++> original hackathon submission -- it is not output from
++> `./run_tests.sh` or any automated CI job. The specific concrete claims
++> below (VETO message wording, iteration cap, CVE mimicry ID format)
++> were cross-checked against the current codebase while writing
++> [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still hold true
++> as of Fase 5. For the automated, currently-passing test suite and its
++> real numbers, see [`docs/usage.md`](usage.md#3-performance--scalability-metrics)
++> and run `./run_tests.sh` yourself. For known gaps and their current
++> fix status (including the dossier-bias limitation described in
++> Section 3 below), see [`docs/known_issues.md`](known_issues.md).
++
+ **Target Environment:** SANS SIFT Workstation
+ **Architecture Type:** Persistent Loop / Custom MCP Integration
+ 
+@@ -53,7 +66,7 @@ To validate our claims regarding the immutable audit trail, below is an exact, u
+ 
+ ---
+ 
+-**Execution Velocity:** Addressing the hackathon's core "Speed Problem," Yomi's eBPF sensor and autonomous loop execute containment and analysis at machine speed. Cryptographic telemetry confirms second reactive latencies (e.g., Latency Benchmark: ~0.82s) without sacrificing constraint integrity.
++**Execution Velocity:** Addressing the hackathon's core "Speed Problem," Yomi's eBPF sensor and autonomous loop execute containment and analysis at machine speed. Cryptographic telemetry confirms second-scale reactive latencies (the exact incident below: ~3.0s) without sacrificing constraint integrity. Individual latencies vary by incident type and hardware -- see the ledger snippet below for one concrete, unedited example rather than treating any single number as a fixed guarantee.
+ 
+ ```json
+ {
+diff --git a/docs/dataset_documentation.md b/docs/dataset_documentation.md
+index 2b5e480..9d4aa94 100644
+--- a/docs/dataset_documentation.md
++++ b/docs/dataset_documentation.md
+@@ -3,6 +3,17 @@
+   <h2>Dataset & Reproducibility Documentation</h2>
+ </div>
+ 
++> **Provenance note (added Fase 5):** the reproduction steps below
++> describe a manual, live demo session run on an actual SANS SIFT
++> Workstation -- not a script `run_tests.sh` executes. Every CLI entry
++> point referenced here (`swarm.py`, `hunter.py`, `mind_reader.py`,
++> `dossier.py`, the `harness.py`/`mcp_server.py` one-liners) was
++> cross-checked against the current codebase while writing
++> [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still matches.
++> For automated, currently-passing coverage, run `./run_tests.sh`
++> yourself; see [`docs/known_issues.md`](known_issues.md) for anything
++> still open.
++
+ ## 1. Overview & Dataset Strategy
+ 
+ This document outlines the datasets, memory captures, and telemetry logs utilized to evaluate the **KuroTech Yomi** architecture. In alignment with the SANS Find Evil! Hackathon mandate, we utilized a combination of exact official case data and live deterministic OS artifacts.
+-- 
+2.43.0
+

@@ -11,6 +11,7 @@ on:
     branches: ["develop"]
   pull_request:
     branches: ["develop", "main"]
+  workflow_call: {}  # allows main-ci.yml to call this workflow directly
 
 jobs:
   full-suite:
@@ -25,7 +26,21 @@ jobs:
       - name: Unit tests (all layers)
         run: pytest tests/unit -v --cov --cov-report=xml
       - name: Integration tests (cross-module chains)
-        run: pytest tests/integration -v
+        # tests/integration/ has no test_*.py files yet (scheduled for
+        # Fase 4). Rather than run pytest against an empty suite and deal
+        # with its exit-code-5 ("no tests collected") behavior under
+        # GitHub Actions' `bash -e` runner (which caused two subtly broken
+        # earlier versions of this guard -- see git history on this line
+        # for what didn't work and why), just check upfront whether any
+        # test_*.py files exist yet, matching the same check run_tests.sh
+        # uses locally. Simpler, and side-steps the errexit pitfalls
+        # entirely instead of working around them.
+        run: |
+          if [ -z "$(find tests/integration -name 'test_*.py' 2>/dev/null)" ]; then
+            echo "No integration tests yet (expected until Fase 4) -- not a failure."
+            exit 0
+          fi
+          pytest tests/integration -v
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -40,7 +55,11 @@ jobs:
         with:
           python-version: "3.10"
       - run: pip install -r requirements.txt -r requirements-dev.txt
-      - name: Run telemetry benchmarks and compare vs baseline
-        run: pytest tests/benchmarks -v --benchmark-json=bench_result.json
-      - name: Fail if latency regressed beyond threshold
-        run: python scripts/check_benchmark_regression.py bench_result.json
+      - name: Run benchmarks
+        # NOTE: we do NOT use pytest-benchmark's --benchmark-json flag here
+        # -- that plugin isn't in requirements-dev.txt. Our benchmark tests
+        # (see tests/benchmarks/test_bench_stamp.py) measure and assert
+        # their own sanity-floor threshold internally instead.
+        run: pytest tests/benchmarks -v -s
+      - name: Check for regression vs committed baseline
+        run: python scripts/check_benchmark_regression.py

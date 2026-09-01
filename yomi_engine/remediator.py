@@ -53,6 +53,23 @@ class ReverserEngine:
         if not isinstance(pid, int) or pid <= 0:
             return False, f"Invalid or missing pid: {pid}"
 
+        # [FIXED] known_issues.md #14: mirrors harness.py's PID<=100
+        # hardblock. Low-numbered PIDs are reserved for the kernel/init
+        # and must never be targeted, even by a rollback script that
+        # isn't auto-executed -- a human or another system component
+        # could run it later without re-checking. Deliberately does NOT
+        # add harness.py's deeper psutil-based "protect on
+        # NoSuchProcess" check: remediator.py's whole purpose is to keep
+        # working when the PID/file is already gone (fileless malware
+        # self-deletes), so failing safe on a missing PID would defeat
+        # its own design intent.
+        if pid <= 100:
+            return (
+                False,
+                f"Refusing remediation targeting protected low-numbered PID {pid} "
+                "(<=100, reserved for kernel/init processes).",
+            )
+
         file_path = anomaly_data.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             return False, "Invalid or missing file_path."
@@ -63,13 +80,37 @@ class ReverserEngine:
                 "file_path must be absolute to avoid accidental scope expansion.",
             )
 
-        # Safety boundary: Never execute kill commands targeting core OS paths
+        # Safety boundary: Never execute kill commands targeting core OS paths.
+        # [FIXED] known_issues.md #15: this used to be an EXACT match
+        # against the bare directory strings only ("/bin", "/etc"), so
+        # "/bin/bash" or "/etc/passwd" -- files INSIDE those directories
+        # -- sailed straight through. Now uses real path containment via
+        # pathlib (resolved path equals the critical dir, or the
+        # critical dir appears in its parents) instead of a naive
+        # string prefix/.startswith() check -- the same category of bug
+        # already flagged for mirage.py's boundary check (known_issues.md
+        # #16/#18): startswith("/etc") would also wrongly match
+        # "/etcetera/file", which pathlib's parent-based comparison does
+        # not. "/" is intentionally kept as an EXACT match only (not
+        # containment) -- containment against "/" would mean "parent of
+        # every absolute path", which would reject everything.
         resolved_path = os.path.realpath(file_path)
-        if resolved_path in {"/", "/bin", "/sbin", "/usr", "/etc"}:
+        resolved = Path(resolved_path)
+
+        if resolved_path == "/":
             return (
                 False,
                 f"Refusing remediation on critical system path: {resolved_path}",
             )
+
+        for critical_dir in ("/bin", "/sbin", "/usr", "/etc"):
+            critical = Path(critical_dir)
+            if resolved == critical or critical in resolved.parents:
+                return (
+                    False,
+                    f"Refusing remediation on critical system path: {resolved_path} "
+                    f"(inside {critical_dir}).",
+                )
 
         return True, ""
 

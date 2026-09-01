@@ -1,0 +1,458 @@
+From c3a0cb1efc08dca08f890dac278195f1d86e7690 Mon Sep 17 00:00:00 2001
+From: Yomi Session <kurotech@yomi.local>
+Date: Mon, 24 Aug 2026 03:39:41 +0000
+Subject: [PATCH 4/7] fix(remediator): #14 critical-PID protection, #15 path
+ containment (not startswith)
+
+All 4 pre-Fase-6 mandatory gates now FIXED: #12, #13, #14, #15, #21.
+
+#14: _validate_payload now rejects pid<=100, mirroring harness.py's
+hardblock. Deliberately skips harness.py's psutil-based NoSuchProcess
+fail-safe check -- remediator.py's design intent is to keep generating
+rollback scripts for self-deleted (fileless) malware PIDs, so failing
+safe on a missing PID would defeat that purpose.
+
+#15: critical system path check now uses real pathlib containment
+(resolved path == critical dir, or critical dir in resolved.parents)
+instead of exact string match against bare directory names. Explicitly
+NOT implemented via .startswith() -- that would repeat the exact bug
+class already flagged for mirage.py (known_issues.md #16/#18):
+startswith('/etc') also wrongly matches /etcetera/file. '/' stays as
+exact-match only (not containment), since containment against '/'
+would mean every absolute path is 'under' it.
+
+6 new tests replace the 2 old KNOWN_GAP tests in test_remediator.py
+(regression tests for the fix, not just skipped).
+
+Verified: 452/452 unit passed (root), 451 passed + 1 skipped as
+non-root, stable across 5 runs. Lint clean. 5 integration + 1 benchmark
+test passed (run separately -- full run_tests.sh hit a sandbox tooling
+timeout, not a code issue).
+
+Also updates docs/known_issues.md (#14, #15 -> FIXED), docs/phase_log/
+fase_5.md and README.md (now covers all 4 gates, not 3), and
+scripts/create_known_issues_fase5.sh (now also closes GH #16/#17 for
+remediator.py, confirmed numbers from the actual GitHub issues
+screenshot rather than guessed).
+---
+ docs/known_issues.md                 | 25 +++++++-
+ docs/phase_log/PHASE_CHECKLIST.md    |  4 +-
+ docs/phase_log/README.md             |  4 +-
+ docs/phase_log/fase_5.md             | 95 +++++++++++++++++++++++-----
+ scripts/create_known_issues_fase5.sh | 21 +++---
+ tests/unit/test_remediator.py        | 84 +++++++++++++++++++-----
+ yomi_engine/remediator.py            | 45 ++++++++++++-
+ 7 files changed, 228 insertions(+), 50 deletions(-)
+
+diff --git a/docs/known_issues.md b/docs/known_issues.md
+index 91c4330..7262ea7 100644
+--- a/docs/known_issues.md
++++ b/docs/known_issues.md
+@@ -156,7 +156,16 @@ sessions or phases, and each entry says whether it's fixed yet.
+     a regression test (`test_KNOWN_GAP_no_critical_pid_protection` in
+     `tests/unit/test_remediator.py`).
+ 
+-    Status: OPEN.
++    Status: **FIXED (Fase 6 prep).** `_validate_payload` now rejects any
++    `pid <= 100` before proceeding, mirroring `harness.py`'s hardblock.
++    Deliberately does NOT add `harness.py`'s deeper psutil-based
++    "protect on `NoSuchProcess`" check -- `remediator.py`'s whole design
++    intent is to keep generating rollback scripts when the PID/file is
++    already gone (fileless malware self-deletes), so failing safe on a
++    missing PID would defeat that purpose. Regression tests:
++    `tests/unit/test_remediator.py::test_low_numbered_pid_is_now_protected`,
++    `::test_pid_exactly_100_is_still_protected`,
++    `::test_pid_101_is_not_blocked_by_the_low_pid_rule`.
+ 
+ 15. **`remediator.py`'s "critical system path" check is an exact match, not
+     a prefix check.** `/bin/bash` and `/etc/passwd` pass validation despite
+@@ -167,7 +176,19 @@ sessions or phases, and each entry says whether it's fixed yet.
+     protection than it actually provides. Captured as
+     `test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix`.
+ 
+-    Status: OPEN.
++    Status: **FIXED (Fase 6 prep).** Switched to real path containment
++    via `pathlib` (resolved path equals the critical dir, or the
++    critical dir appears in `resolved.parents`) instead of an exact
++    string match -- deliberately NOT implemented as `.startswith()`,
++    which would repeat the exact class of bug flagged in #16/#18 below
++    for `mirage.py` (`.startswith("/etc")` also wrongly matches
++    `/etcetera/file`). `/` is kept as an EXACT match only, not
++    containment -- every absolute path is technically "under" `/`, so
++    treating it as a containment boundary would reject everything.
++    Regression tests:
++    `tests/unit/test_remediator.py::test_critical_path_containment_now_blocks_files_inside_protected_dirs`,
++    `::test_critical_path_containment_does_not_repeat_mirage_startswith_bug`,
++    `::test_root_path_is_still_exact_match_only_not_containment`.
+ 
+ 16. **`mirage.py`'s `teardown_hallucination` boundary check uses string
+     `.startswith()`, not proper path containment** -- theoretically
+diff --git a/docs/phase_log/PHASE_CHECKLIST.md b/docs/phase_log/PHASE_CHECKLIST.md
+index b741e17..c5115fe 100644
+--- a/docs/phase_log/PHASE_CHECKLIST.md
++++ b/docs/phase_log/PHASE_CHECKLIST.md
+@@ -27,6 +27,6 @@ semua ini harus sudah beres — bukan opsional, bukan nyusul belakangan:
+ | 0-1 | `scripts/create_known_issues.sh` | 13 (#1-13) |
+ | 2 | `scripts/create_known_issues_batch2_3.sh` | 7 (#14-20) |
+ | 3 | `scripts/create_known_issues_fase3.sh` | 2 (#21-22) |
+-| 5 | `scripts/create_known_issues_fase5.sh` | 1 baru (#24) + 3 ditutup (#12, #13, #21) |
++| 5 | `scripts/create_known_issues_fase5.sh` | 1 baru (#24) + 5 ditutup (#12, #13, #14, #15, #21) |
+ 
+-Total sampai Fase 5: **23 temuan open/tercatat**, **1 temuan baru (#24)**, GitHub Issues #14, #15, #23 ditutup.
++Total sampai Fase 5: **24 temuan tercatat**, **1 temuan baru (#24)**, **5 gerbang wajib FIXED (#12, #13, #14, #15, #21)** -- semua 4 gerbang pra-Fase 6 sekarang tertutup. *(`scripts/create_known_issues_fase5.sh` perlu di-update untuk menutup #14/#15 remediator.py juga -- nomor GitHub issue-nya belum dikonfirmasi, script saat ini baru menutup 3 dari 5.)*
+diff --git a/docs/phase_log/README.md b/docs/phase_log/README.md
+index 964193c..85b908f 100644
+--- a/docs/phase_log/README.md
++++ b/docs/phase_log/README.md
+@@ -11,8 +11,8 @@ keputusan arsitektur. Ditulis untuk dibaca tanpa perlu gali `git log` atau
+ | [Fase 2](fase_2.md) | ✅ Selesai (merged) | Unit test Lapisan 1 (11 modul), 190 test, 4 bug fungsional diperbaiki |
+ | [Fase 3](fase_3.md) | ✅ Selesai (belum merge) | Unit test Lapisan 2 (8 modul), 232 test, 1 gap logika + 1 dead code ditemukan |
+ | [Fase 4](fase_4.md) | ✅ Selesai (belum merge) | Integration/crucible test (5) + benchmark regression checker sungguhan |
+-| Fase 5 | ⏳ Belum mulai | README split (ramping vs dokumentasi teknis) |
+-| Fase 6 | ⏳ Belum mulai | GitHub Release + landing page KuroTech |
++| [Fase 5](fase_5.md) | ✅ Selesai (belum merge) | README split + 4 gerbang wajib pra-Fase 6 (#12, #13, #14, #15, #21) diperbaiki; #24 baru ditemukan |
++| Fase 6 | ⏳ Belum mulai | Guardian Orchestrator + Module Registry (integrasi semua modul), baru GitHub Release + landing page KuroTech |
+ 
+ Untuk daftar bug lengkap (fixed + open), lihat
+ [`docs/known_issues.md`](../known_issues.md) atau tab **Issues** di GitHub
+diff --git a/docs/phase_log/fase_5.md b/docs/phase_log/fase_5.md
+index 25170c9..b6c9b65 100644
+--- a/docs/phase_log/fase_5.md
++++ b/docs/phase_log/fase_5.md
+@@ -1,4 +1,4 @@
+-# Fase 5 — README Split + 3 Gerbang Wajib Pra-Fase 6 (#12, #13, #21)
++# Fase 5 — README Split + 4 Gerbang Wajib Pra-Fase 6 (#12, #13, #14, #15, #21)
+ 
+ **Status:** SELESAI · **Branch:** `docs/readme-split`
+ 
+@@ -16,9 +16,12 @@
+ 2. **Issue #13** (checkpoint mismatch message menyesatkan) — dibarengin
+    sama beres-beres dokumentasi, sesuai keputusan triase.
+ 3. Dua dari empat gerbang wajib sebelum Fase 6: **#21** (router.py no
+-   OS-level feedback) dan **#12** (stamp.py coverage 54%). *(#14 dan #15,
+-   remediator.py, belum dikerjakan sesi ini — lihat "Sisa pekerjaan" di
+-   bawah.)*
++   OS-level feedback) dan **#12** (stamp.py coverage 54%).
++4. **Update lanjutan (di luar sesi kerja awal, sebelum lanjut ke
++   integrasi Guardian Orchestrator)**: dua gerbang wajib terakhir,
++   **#14** dan **#15** (`remediator.py`), diselesaikan juga -- lihat
++   bagian "5. Issue #14 & #15" di bawah. Dengan ini, **semua 4 gerbang
++   wajib pra-Fase 6 sudah FIXED**.
+ 
+ ## 1. README Split
+ 
+@@ -196,22 +199,80 @@ tersendiri sesi ini, jadi tidak diperbaiki sekarang.
+ - Tidak ada regresi di `test_stamp.py` maupun `test_router.py` yang sudah
+   ada.
+ 
++## 5. Issue #14 & #15 — remediator.py: proteksi PID kritis + path containment
++
++**#14 — tidak ada proteksi PID kritis.** `_validate_payload` di
++`remediator.py` nggak punya padanan `harness.py`'s PID<=100 hardblock —
++payload yang menargetkan PID 1 (init) berhasil generate rollback script.
++
++**Fix:** tambahkan blok `if pid <= 100: return False, ...` persis di
++awal validasi, sebelum pengecekan lain. **Sengaja tidak** menambahkan
++pengecekan psutil-based ala `harness.py` (yang fail-safe memproteksi
++kalau `NoSuchProcess`) — karena tujuan desain `remediator.py` justru
++kebalikan: harus tetap bisa generate rollback script walau PID/file
++sudah hilang (malware fileless yang self-delete). Menambahkan fail-safe
++serupa `harness.py` di sini justru mengalahkan tujuan desainnya sendiri.
++
++**#15 — critical path check exact-match, bukan containment.**
++`/bin/bash` dan `/etc/passwd` lolos validasi karena pengecekan cuma
++membandingkan persis terhadap string direktori telanjang (`"/bin"`,
++`"/etc"`), bukan path di dalamnya.
++
++**Fix:** ganti jadi pengecekan containment path sungguhan pakai
++`pathlib` (`resolved == critical` atau `critical in resolved.parents`)
++— **secara sadar TIDAK dibuat pakai `.startswith()`**, karena itu
++persis kelas bug yang sudah dicatat di #16/#18 untuk `mirage.py`
++(`.startswith("/etc")` juga salah-cocok ke `/etcetera/file`). `/`
++sengaja tetap exact-match saja, bukan containment — karena secara
++teknis semua path absolut itu "di bawah" `/`, jadi kalau dipakai
++sebagai boundary containment, semua payload bakal ketolak.
++
++Test baru di `tests/unit/test_remediator.py` (6 test menggantikan 2 test
++`KNOWN_GAP` lama total, bukan cuma di-skip):
++`test_low_numbered_pid_is_now_protected`,
++`test_pid_exactly_100_is_still_protected`,
++`test_pid_101_is_not_blocked_by_the_low_pid_rule`,
++`test_critical_path_containment_now_blocks_files_inside_protected_dirs`,
++`test_critical_path_containment_does_not_repeat_mirage_startswith_bug`,
++`test_root_path_is_still_exact_match_only_not_containment`.
++
++**Verifikasi:** 452/452 unit test lulus (root), **451 passed + 1
++skipped sebagai non-root, stabil 5x run berturut-turut**. Lint bersih,
++5 integration test lulus, 1 benchmark test lulus (dijalankan terpisah
++karena `./run_tests.sh` penuh kena timeout tooling di sandbox saya —
++bukan indikasi masalah kode, tiap komponennya lulus sendiri-sendiri).
++Tidak ada pemanggil lain `ReverserEngine` (`shadow_net.py`) yang
++terdampak — di test-nya `ReverserEngine` di-mock, dan di produksi PID
++target insiden nyata praktis selalu >100.
++
+ ## Sisa pekerjaan (belum di sesi ini)
+ 
+-1. Issue **#14** — `remediator.py` tidak ada proteksi PID kritis.
+-2. Issue **#15** — `remediator.py` path-check exact-match, bukan prefix.
+-3. Jalankan `scripts/create_known_issues_fase5.sh` (buat issue GitHub
+-   baru #24, tutup #14/#15/#23 lama — *catatan: nomor GitHub #14/#15 di
+-   sini adalah untuk stamp-coverage & checkpoint-message, JANGAN
+-   tertukar sama rencana remediator.py #14/#15 di known_issues.md
+-   penomoran lokal, yang beda skema*).
+-4. Setelah #14 dan #15 (remediator.py) beres, baru declare 4-issue-
+-   prioritas pra-Fase-6 selesai semua, lanjut ke **Fase 6** (Release +
+-   landing page KuroTech).
++1. **Semua 4 gerbang wajib pra-Fase 6 (#12, #13, #14, #15, #21) sudah
++   FIXED.** Langkah selanjutnya (di luar cakupan dokumen ini) adalah
++   **Guardian Orchestrator + Module Registry** — "great integration"
++   yang menyambungkan semua modul (`mind_reader`, `shadow_net`,
++   `remediator`, `dossier`, `mirage`, `sandbox`, `ghost`,
++   `ebpf_sensor`) ke autonomous loop `sentinel.py` sebagai background
++   process, bukan cuma reachable lewat `if __name__ == "__main__"`
++   masing-masing file. Ini juga menutup #11 (sentinel wiring 5/13
++   modul) dan menyiapkan keputusan arsitektur untuk #9 (ImmutableStamp
++   singleton + hardcoded path).
++2. Jalankan `scripts/create_known_issues_fase5.sh` (buat issue GitHub
++   baru #24, tutup #14/#15/#23 lama untuk #12/#13/#21 -- *catatan: nomor
++   GitHub #14/#15 di situ untuk stamp-coverage & checkpoint-message,
++   BEDA skema penomoran dengan #14/#15 remediator.py di known_issues.md
++   lokal repo ini*). Perlu ditambah langkah penutupan issue GitHub untuk
++   #14/#15 remediator.py juga (nomor GitHub-nya belum dikonfirmasi).
++3. Setelah Guardian Orchestrator + Module Registry solid, baru
++   rencanakan **Fase 6** (GitHub Release + landing page KuroTech) secara
++   konkret.
+ 
+ ## Ringkasan angka
+ 
+-- Total temuan di `docs/known_issues.md`: **24** (#1-24), naik dari 23.
+-- 3 temuan lama (#12, #13, #21) berubah status jadi **FIXED**.
++- Total temuan di `docs/known_issues.md`: **24** (#1-24).
++- **5 temuan** (#12, #13, #14, #15, #21) berubah status jadi **FIXED**
++  — semua 4 gerbang wajib pra-Fase 6, plus #12 sebagai bagian dari
++  paket yang sama.
+ - 1 temuan baru (#24) ditambahkan, status **OPEN**.
+-- Total test suite: **448/448** hijau, stabil 5x run berturut-turut.
++- Total test suite: **452/452** hijau (unit) sebagai root, **451
++  passed + 1 skipped** sebagai non-root, stabil 5x run berturut-turut.
+diff --git a/scripts/create_known_issues_fase5.sh b/scripts/create_known_issues_fase5.sh
+index e4e0277..4319227 100755
+--- a/scripts/create_known_issues_fase5.sh
++++ b/scripts/create_known_issues_fase5.sh
+@@ -2,18 +2,19 @@
+ #
+ # create_known_issues_fase5.sh — GitHub issue housekeeping for Fase 5.
+ #
+-# Fase 5 covers: README split, and the pre-Fase-6 gate items #12 (stamp.py
+-# coverage), #13 (checkpoint mismatch wording), and #21 (router.py OS-level
+-# failure feedback) -- all three FIXED. It also surfaced one new open
+-# finding, #24 (cleanup_corrupt_backups retain_last), while writing the
+-# coverage tests for #12.
++# Fase 5 covers: README split, and all FOUR pre-Fase-6 gate items --
++# #12 (stamp.py coverage), #13 (checkpoint mismatch wording), #14
++# (remediator.py critical-PID protection), #15 (remediator.py path
++# containment), and #21 (router.py OS-level failure feedback) -- all
++# FIXED. It also surfaced one new open finding, #24 (cleanup_corrupt_backups
++# retain_last), while writing the coverage tests for #12.
+ #
+ # This script does two things:
+ #   1. Creates ONE new GitHub issue for #24.
+-#   2. Closes the three GitHub issues that correspond to known_issues.md
+-#      #12, #13, #21 (GitHub issue numbers are known_issues.md number + 2,
+-#      per the existing offset in this repo: #14, #15, #23), each with a
+-#      closing comment pointing at the fix.
++#   2. Closes the five GitHub issues that correspond to known_issues.md
++#      #12, #13, #14, #15, #21 (GitHub issue numbers are known_issues.md
++#      number + 2, per the existing offset in this repo: #14, #15, #16,
++#      #17, #23), each with a closing comment pointing at the fix.
+ #
+ # Run this ONCE, after create_known_issues_fase3.sh has already been run.
+ #
+@@ -57,6 +58,8 @@ echo "NOTE: adjust these numbers if your GitHub issue numbering differs from the
+ for gh_num_and_msg in \
+   "14:Fixed in Fase 5 -- coverage raised from 54%% to 89%% via tests/unit/test_stamp_coverage.py (45 new tests). See docs/known_issues.md #12 for the full breakdown." \
+   "15:Fixed in Fase 5 -- log message reworded to distinguish routine checkpoint catch-up from genuine tamper detection. See docs/known_issues.md #13." \
++  "16:Fixed in Fase 5 -- _validate_payload now rejects any pid <= 100 before proceeding, mirroring harness.py's hardblock. Does not add harness.py's psutil-based NoSuchProcess fail-safe, since remediator.py must keep working for self-deleted (fileless) malware PIDs. See docs/known_issues.md #14." \
++  "17:Fixed in Fase 5 -- critical-path check now uses real pathlib containment (resolved path in critical dir's parents) instead of exact string match, without repeating the mirage.py .startswith() bug (#16/#18). See docs/known_issues.md #15." \
+   "23:Fixed in Fase 5 -- execute_autonomous_triage now has an explicit fallback branch that feeds [SYSTEM FEEDBACK] to the LLM for any OS-level failure status. See docs/known_issues.md #21."
+ do
+   gh_num="${gh_num_and_msg%%:*}"
+diff --git a/tests/unit/test_remediator.py b/tests/unit/test_remediator.py
+index 6a9ff7e..441c25f 100644
+--- a/tests/unit/test_remediator.py
++++ b/tests/unit/test_remediator.py
+@@ -84,34 +84,86 @@ def test_valid_payload_passes(reverser, monkeypatch):
+     assert valid is True
+ 
+ 
+-# --- Documented gaps (regression tests for CURRENT behavior) --------------
++# --- Fixed gaps (regression tests for the FIXED behavior) -----------------
+ 
+-def test_KNOWN_GAP_no_critical_pid_protection(reverser, monkeypatch):
++def test_low_numbered_pid_is_now_protected(reverser, monkeypatch):
+     """
+-    KNOWN GAP: remediator.py has no equivalent of harness.py's PID<=100
+-    hardblock. A payload targeting PID 1 (init) currently passes
+-    validation. The generated script isn't auto-executed (a human/other
+-    system component would need to run it), but nothing here stops one
+-    from being generated. If this is ever fixed, this test should start
+-    failing and needs to be rewritten to assert the new protective
+-    behavior.
++    FIXED (known_issues.md #14): mirrors harness.py's PID<=100 hardblock.
++    A payload targeting PID 1 (init) must now be rejected before it ever
++    reaches script generation.
+     """
+     monkeypatch.setattr("os.path.realpath", lambda p: p)
+     valid, reason = reverser._validate_payload({"pid": 1, "file_path": "/tmp/x"})
+-    assert valid is True  # documents the gap, does not endorse it
++    assert valid is False
++    assert "protected" in reason.lower() or "100" in reason
++
++
++def test_pid_exactly_100_is_still_protected(reverser, monkeypatch):
++    monkeypatch.setattr("os.path.realpath", lambda p: p)
++    valid, _ = reverser._validate_payload({"pid": 100, "file_path": "/tmp/x"})
++    assert valid is False
++
++
++def test_pid_101_is_not_blocked_by_the_low_pid_rule(reverser, monkeypatch):
++    monkeypatch.setattr("os.path.realpath", lambda p: p)
++    valid, _ = reverser._validate_payload({"pid": 101, "file_path": "/tmp/x"})
++    assert valid is True
+ 
+ 
+-def test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix(reverser, monkeypatch):
++def test_critical_path_containment_now_blocks_files_inside_protected_dirs(reverser, monkeypatch):
+     """
+-    KNOWN GAP: "/bin/bash" and "/etc/passwd" are files INSIDE the blocked
+-    directories, but the check only blocks exact matches to the bare
+-    directory strings themselves ("/bin", "/etc"), not paths within them.
++    FIXED (known_issues.md #15): the check now uses real path containment
++    (pathlib parent comparison), not an exact match against the bare
++    directory string. "/bin/bash" and "/etc/passwd" -- files INSIDE the
++    blocked directories -- must now be rejected too.
+     """
+     monkeypatch.setattr("os.path.realpath", lambda p: p)
++
+     valid, reason = reverser._validate_payload({"pid": 5000, "file_path": "/bin/bash"})
+-    assert valid is True  # passes validation despite being a core system binary
++    assert valid is False
++    assert "critical system path" in reason.lower()
++
++    valid2, reason2 = reverser._validate_payload({"pid": 5000, "file_path": "/etc/passwd"})
++    assert valid2 is False
++    assert "critical system path" in reason2.lower()
++
++    valid3, _ = reverser._validate_payload({"pid": 5000, "file_path": "/usr/local/bin/tool"})
++    assert valid3 is False
++
++
++def test_critical_path_containment_does_not_repeat_mirage_startswith_bug(reverser, monkeypatch):
++    """
++    The fix for #15 must use real path containment, not string
++    .startswith() -- the same class of bug already flagged for
++    mirage.py's boundary check (known_issues.md #16/#18).
++    "/etcetera/file" and "/binfoo" share a string PREFIX with "/etc" and
++    "/bin" but are NOT inside those directories, and must still pass.
++    """
++    monkeypatch.setattr("os.path.realpath", lambda p: p)
++
++    valid, _ = reverser._validate_payload({"pid": 5000, "file_path": "/etcetera/file"})
++    assert valid is True
++
++    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/binfoo/malware"})
++    assert valid2 is True
++
++
++def test_root_path_is_still_exact_match_only_not_containment(reverser, monkeypatch):
++    """
++    "/" is deliberately kept as an EXACT match, not path containment --
++    every absolute path is technically "under" "/", so treating "/" as a
++    containment boundary would reject every single payload. Only a
++    payload whose resolved path IS "/" itself gets blocked.
++    """
++    monkeypatch.setattr("os.path.realpath", lambda p: p)
++
++    valid, reason = reverser._validate_payload({"pid": 5000, "file_path": "/"})
++    assert valid is False
++    assert "critical system path" in reason.lower()
+ 
+-    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/etc/passwd"})
++    # A normal, unrelated absolute path must NOT be blocked just because
++    # it's technically "under root".
++    valid2, _ = reverser._validate_payload({"pid": 5000, "file_path": "/tmp/malware.bin"})
+     assert valid2 is True
+ 
+ 
+diff --git a/yomi_engine/remediator.py b/yomi_engine/remediator.py
+index 3a8aa09..c03ac62 100644
+--- a/yomi_engine/remediator.py
++++ b/yomi_engine/remediator.py
+@@ -53,6 +53,23 @@ class ReverserEngine:
+         if not isinstance(pid, int) or pid <= 0:
+             return False, f"Invalid or missing pid: {pid}"
+ 
++        # [FIXED] known_issues.md #14: mirrors harness.py's PID<=100
++        # hardblock. Low-numbered PIDs are reserved for the kernel/init
++        # and must never be targeted, even by a rollback script that
++        # isn't auto-executed -- a human or another system component
++        # could run it later without re-checking. Deliberately does NOT
++        # add harness.py's deeper psutil-based "protect on
++        # NoSuchProcess" check: remediator.py's whole purpose is to keep
++        # working when the PID/file is already gone (fileless malware
++        # self-deletes), so failing safe on a missing PID would defeat
++        # its own design intent.
++        if pid <= 100:
++            return (
++                False,
++                f"Refusing remediation targeting protected low-numbered PID {pid} "
++                "(<=100, reserved for kernel/init processes).",
++            )
++
+         file_path = anomaly_data.get("file_path")
+         if not isinstance(file_path, str) or not file_path:
+             return False, "Invalid or missing file_path."
+@@ -63,14 +80,38 @@ class ReverserEngine:
+                 "file_path must be absolute to avoid accidental scope expansion.",
+             )
+ 
+-        # Safety boundary: Never execute kill commands targeting core OS paths
++        # Safety boundary: Never execute kill commands targeting core OS paths.
++        # [FIXED] known_issues.md #15: this used to be an EXACT match
++        # against the bare directory strings only ("/bin", "/etc"), so
++        # "/bin/bash" or "/etc/passwd" -- files INSIDE those directories
++        # -- sailed straight through. Now uses real path containment via
++        # pathlib (resolved path equals the critical dir, or the
++        # critical dir appears in its parents) instead of a naive
++        # string prefix/.startswith() check -- the same category of bug
++        # already flagged for mirage.py's boundary check (known_issues.md
++        # #16/#18): startswith("/etc") would also wrongly match
++        # "/etcetera/file", which pathlib's parent-based comparison does
++        # not. "/" is intentionally kept as an EXACT match only (not
++        # containment) -- containment against "/" would mean "parent of
++        # every absolute path", which would reject everything.
+         resolved_path = os.path.realpath(file_path)
+-        if resolved_path in {"/", "/bin", "/sbin", "/usr", "/etc"}:
++        resolved = Path(resolved_path)
++
++        if resolved_path == "/":
+             return (
+                 False,
+                 f"Refusing remediation on critical system path: {resolved_path}",
+             )
+ 
++        for critical_dir in ("/bin", "/sbin", "/usr", "/etc"):
++            critical = Path(critical_dir)
++            if resolved == critical or critical in resolved.parents:
++                return (
++                    False,
++                    f"Refusing remediation on critical system path: {resolved_path} "
++                    f"(inside {critical_dir}).",
++                )
++
+         return True, ""
+ 
+     def _generate_script(
+-- 
+2.43.0
+

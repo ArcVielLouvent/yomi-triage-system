@@ -1,0 +1,496 @@
+# Known Issues Log
+
+Running log of every real bug/inconsistency found during the Yomi evolution
+effort, in the order discovered. Purpose: nothing found gets lost between
+sessions or phases, and each entry says whether it's fixed yet.
+
+## Fixed
+
+1. **`docs/dataset_documentation.md` told judges to `export GEMINI_API_KEY`,
+   but `router.py` reads `YOMI_GEMINI_API_KEY`.** Following the doc literally
+   = LLM cascade silently never activates. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`).
+
+2. **`README.md` referenced `docs/system_topology.svg` (lowercase), actual
+   file is `docs/System_Topology.svg`.** Broken image link on any
+   case-sensitive filesystem (Linux, GitHub raw). Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`).
+
+3. **`yomi_data/recovery/` created at runtime by `shadow_net.py` (ELF
+   recovery from RAM) had no `.gitkeep`,** unlike the other 6 data
+   subfolders -- inconsistent repo structure on fresh clone. Fixed on
+   `develop`.
+
+4. **`yomi_core/cli.py` `--install` flag crashes 100% of the time**
+   (`UnboundLocalError` on `sys.exit(0)`), caused by a redundant local
+   `import sys` later in the same `main()` function shadowing the
+   module-level import for the whole function scope. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`)
+   (removed the redundant local import).
+
+5. **`_run_console_loop()` in `cli.py` called `_get_latest_ledger_log()`,
+   a function that doesn't exist anywhere in the codebase** -- `NameError`
+   on first ledger-size change in console/headless fallback mode. The
+   sibling `_run_tui_loop()` had already been correctly updated to call the
+   real helper (`_get_new_ledger_logs(last_hash)`); console mode was never
+   brought in sync. Fixed on `foundation/stamp-datastore-osbridge` (not yet merged to `develop`) (console loop now matches TUI loop's
+   correct pattern).
+
+6. **`query_cve()` was defined twice in `yomi_engine/library.py`.** The
+   second (silently active) definition used a shallow `.copy()` instead of
+   `deepcopy()`, meaning callers could mutate nested fields of the
+   in-memory CVE cache through the object they were handed back. Fixed on
+   `develop` (consolidated to one deepcopy-safe definition).
+
+## Documented, not yet fixed (behavioral/design issues, need a decision)
+
+7. **`weaver.py` narrative generator drops MITRE tactic findings from the
+   human-readable dossier even when the underlying ledger clearly logged
+   them** ("Dossier Generation Bias" -- confirmed empirically against a real
+   report file in the original submission, not just from the docs'
+   self-reported warning). Needs a fix in `weaver.py`'s event-selection
+   logic; scheduled for whichever phase touches `yomi_engine/weaver.py` +
+   `dossier.py`.
+
+8. **`write_year_store()` (yomi_data) performs no shape validation at write
+   time.** An entry missing a matching `cve_id` field writes successfully
+   with zero error, then silently vanishes (quarantined as corrupt) on the
+   next read/scan. Captured as a regression test
+   (`test_write_year_store_silently_drops_entries_missing_cve_id` in
+   `tests/unit/test_yomi_data.py`) so the bug can't regress further, but
+   the actual fix (validate on write, raise instead of silently accepting)
+   is not yet implemented.
+
+9. **`ImmutableStamp` (stamp.py) and `yomi_data/__init__.py` both hardcode
+   their data directory relative to `__file__`,** with `ImmutableStamp`
+   additionally being a strict process-wide singleton. This makes true
+   multi-tenant / concurrent-investigation use impossible within one
+   process, and required a `__file__`-monkeypatch fixture just to unit-test
+   safely (see `tests/unit/conftest.py`). Flagged as a design smell for
+   discussion -- not changed, since it's a behavior change beyond "add
+   tests," and affects every module built on top of it.
+
+10. **`yomi_mcp/mcp_server.py`'s `READ_VAULTS`/`WRITE_VAULTS` are hardcoded
+    absolute path prefixes** (`/tmp`, `/var/tmp`, `/mnt`, `/home`,
+    `/workspace`, `/data`, `/media`, `/opt/yomi`), not derived from
+    `yomi_data`'s actual location. A deployment outside those trees will
+    have every MCP tool call VETOed as "outside vault boundaries" even when
+    legitimate. Portability concern for enterprise deployment; not yet
+    addressed.
+
+## Architectural gaps (not bugs, but the reason Guardian/Module Registry exist)
+
+11. As of the hackathon snapshot, `sentinel.py`'s autonomous loop only
+    wired in `swarm`, `hunter`, `router`, `mitre_mapper`, `telemetry`.
+    Eight real modules (`mind_reader`, `shadow_net`, `remediator`,
+    `dossier`, `mirage`, `sandbox`, `ghost`, `ebpf_sensor`) existed but were
+    never called automatically -- only reachable via each file's own
+    `if __name__ == "__main__"`. This is what `yomi_core/module_registry.py`
+    (Fase 4-5, Guardian orchestrator) is being built to fix.
+
+    Status: **FIXED (Fase 6, Tahap 1).** `yomi_core/guardian.py`'s
+    `GuardianOrchestrator` now wires all 8 modules into
+    `sentinel.py`'s autonomous loop, gated entirely by
+    `module_registry.resolve_active_modules()`:
+    - `handle_post_containment(target_pid)` fires after a SYNCHRONOUS
+      containment success (the instant CRITICAL SIGSTOP path, or a
+      harness `status=="SUCCESS"`/`action=="FROZEN"` result) and
+      dispatches `MIND_READER`, `REMEDIATOR`, `SANDBOX`, and `MIRAGE` (in
+      that order, each independently try/except-guarded).
+    - `handle_escalation(target_pid, reason)` fires on
+      `ESCALATED_TO_SHADOW_NET` and fire-and-forget dispatches
+      `SHADOW_NET` -- deliberately does NOT chain further modules off of
+      it, since `deploy_micro_hook()` spawns its own monitoring thread
+      and its outcome isn't known synchronously (see the module
+      docstring's constraint #2 for the full reasoning).
+    - `generate_incident_dossier()` fires unconditionally at the end of
+      every `_zero_prompt_trigger` cycle if `DOSSIER` is enabled.
+    - `periodic_maintenance()` sweeps orphaned `MIRAGE` decoys every 20
+      sentinel cycles (not per-incident).
+    - `bootstrap_startup_daemons()` wires `GHOST` and `EBPF_SENSOR` at
+      CLI startup (see #26 below -- this replaces two previously
+      ungated/mis-gated call sites in `cli.py`).
+
+    Every dispatch is wrapped in try/except and logged to the ledger on
+    failure (`<MODULE>_DISPATCH_ERROR`) rather than raised, so one
+    misbehaving module (e.g. Radare2 missing, a sandbox mount failing)
+    can never take down the observation loop or block modules after it.
+
+    Tests: `tests/unit/test_guardian.py` (25 tests, 93% coverage of
+    `guardian.py`), plus new end-to-end assertions in
+    `tests/integration/test_chain_sentinel_router_harness.py` proving
+    real dispatch against a REAL subprocess PID (not mocked) -- the
+    real containment path resolves `/proc/<pid>/exe` to the actual
+    python3 interpreter, `REMEDIATOR` correctly refuses it via the #15
+    path-containment fix (python3 lives under `/usr`), and `DOSSIER`
+    generates a real signed report, all verified via ledger entries.
+
+    **Explicitly NOT touched by this fix:** #9 (ImmutableStamp
+    singleton / single-tenant architecture) -- multi-tenant concurrent
+    investigation remains a separate, deferred architectural decision.
+    Guardian assumes the same single-investigation-per-process model
+    `sentinel.py` already used.
+
+## Style/lint backlog (not blocking, tracked for later per-package cleanup)
+
+- 19x `S110` (try/except/pass without logging) across
+  `stamp.py`, `cli.py`, `dashboard.py`, `sentinel.py`, `dossier.py`,
+  `ebpf_sensor.py`, `library.py`, `sandbox.py`, `shadow_net.py`, `swarm.py`,
+  `sift_toolkit.py`. Many are legitimate "best effort" cleanup patterns
+  (unmount, chmod, temp-file removal) -- needs per-instance review, not a
+  blanket "add logging" pass. Deferred to whichever `foundation/*` or
+  `feature/*` branch actually touches each file.
+- 1x `E722` bare `except:` in `ebpf_sensor.py`.
+- ~30 import-sort / f-string-cosmetic findings across the repo (ruff
+  `--fix`-able), deferred for the same reason.
+
+## Coverage gaps found during pre-merge review (not bugs, but blind spots)
+
+12. **`yomi_audit/stamp.py` is only 54% covered by Fase 1 tests.** The
+    untested 46% includes security-relevant paths that have never been
+    executed by any test: KMS/Vault/AWS-Secrets-Manager HMAC key retrieval,
+    password-derived ephemeral key generation, corrupted-ledger backup +
+    cleanup, and SOC checkpoint anchoring/verification. CI passing does not
+    mean these paths are correct -- it means they've never been exercised
+    at all. Flagged as the top coverage priority for whichever phase next
+    touches `stamp.py`.
+
+    Status: **FIXED (Fase 5).** Coverage raised from 54% to 89% via
+    `tests/unit/test_stamp_coverage.py` (45 new tests): all KMS provider
+    dispatch paths, Vault (flat + KV-v2 nested response shapes, custom
+    field name, request failure), AWS Secrets Manager (`SecretString` and
+    `SecretBinary`, missing `boto3`, client failure), ephemeral
+    PBKDF2 key derivation (env-var password, missing password, empty
+    password, salt persistence), `_backup_corrupted_ledger` +
+    `cleanup_corrupt_backups` (including the env-flag-triggered path),
+    `_create_or_verify_checkpoint`, `verify_soc_checkpoint` (valid,
+    missing signature, tampered, read-error), the ledger-corruption ->
+    backup -> reinit round trip, and the legacy (non-compact JSON) hash
+    fallback in `_verify_ledger`. All external calls (`requests`,
+    `boto3`) are mocked; nothing here makes a real network call. The
+    remaining 11% is almost entirely defensive `except OSError: pass`
+    blocks around `os.chmod` calls that are impractical to trigger
+    without mocking the OS call to fail for no functional reason -- not
+    considered worth chasing further. See also #24 below, a real design
+    nuance this test-writing surfaced in `cleanup_corrupt_backups`.
+
+13. **`_create_or_verify_checkpoint()` prints "Checkpoint mismatch
+    detected. Updating..." on every normal ledger write since the last
+    checkpoint** -- this is expected behavior (checkpoint just needs to
+    catch up), not a tamper signal, but the wording reads like a security
+    alert. Risk: operators habituate to seeing this message and start
+    ignoring it, which defeats its purpose on the rare occasion a mismatch
+    *is* real tampering. Consider distinguishing "routine update" from
+    "verification failure" in the log wording. Not fixed here (behavior
+    change, not test-writing); flagged for whoever next touches this
+    function.
+
+    Status: **FIXED (Fase 5).** Message changed to "Checkpoint routine
+    update: ledger has new entries since the last checkpoint (expected on
+    normal restart). Re-anchoring checkpoint to the current ledger
+    state." Genuine tamper detection is unchanged -- it lives entirely in
+    `verify_soc_checkpoint()`'s HMAC attestation check, which this
+    function does not touch. Regression test:
+    `tests/unit/test_stamp_coverage.py::test_checkpoint_routine_update_on_ledger_advance`.
+
+## Fase 2 Batch 2 findings (remediator.py, mirage.py)
+
+14. **`remediator.py`'s `_validate_payload` has no critical-PID protection**
+    (unlike `harness.py`'s PID<=100 hardblock). A payload targeting PID 1
+    (init) generates a rollback script successfully. The script isn't
+    auto-executed, but nothing stops one from being generated. Captured as
+    a regression test (`test_KNOWN_GAP_no_critical_pid_protection` in
+    `tests/unit/test_remediator.py`).
+
+    Status: **FIXED (Fase 6 prep).** `_validate_payload` now rejects any
+    `pid <= 100` before proceeding, mirroring `harness.py`'s hardblock.
+    Deliberately does NOT add `harness.py`'s deeper psutil-based
+    "protect on `NoSuchProcess`" check -- `remediator.py`'s whole design
+    intent is to keep generating rollback scripts when the PID/file is
+    already gone (fileless malware self-deletes), so failing safe on a
+    missing PID would defeat that purpose. Regression tests:
+    `tests/unit/test_remediator.py::test_low_numbered_pid_is_now_protected`,
+    `::test_pid_exactly_100_is_still_protected`,
+    `::test_pid_101_is_not_blocked_by_the_low_pid_rule`.
+
+15. **`remediator.py`'s "critical system path" check is an exact match, not
+    a prefix check.** `/bin/bash` and `/etc/passwd` pass validation despite
+    being core system files, because the check only compares against the
+    bare directory strings ("/bin", "/etc") themselves. Practical impact
+    is limited since the generated script's kill commands only reference
+    `pid`, never `file_path` -- but the check's own comment claims broader
+    protection than it actually provides. Captured as
+    `test_KNOWN_GAP_critical_path_check_is_exact_match_not_prefix`.
+
+    Status: **FIXED (Fase 6 prep).** Switched to real path containment
+    via `pathlib` (resolved path equals the critical dir, or the
+    critical dir appears in `resolved.parents`) instead of an exact
+    string match -- deliberately NOT implemented as `.startswith()`,
+    which would repeat the exact class of bug flagged in #16/#18 below
+    for `mirage.py` (`.startswith("/etc")` also wrongly matches
+    `/etcetera/file`). `/` is kept as an EXACT match only, not
+    containment -- every absolute path is technically "under" `/`, so
+    treating it as a containment boundary would reject everything.
+    Regression tests:
+    `tests/unit/test_remediator.py::test_critical_path_containment_now_blocks_files_inside_protected_dirs`,
+    `::test_critical_path_containment_does_not_repeat_mirage_startswith_bug`,
+    `::test_root_path_is_still_exact_match_only_not_containment`.
+
+16. **`mirage.py`'s `teardown_hallucination` boundary check uses string
+    `.startswith()`, not proper path containment** -- theoretically
+    vulnerable to sibling-directory prefix matching (e.g. a folder named
+    `mirage_env_EVIL` also "starts with" `mirage_env`). Not exploitable
+    through the current public API (target_path is always built from an
+    int-cast pid + a 2-value-constrained prefix), but flagged as a pattern
+    to avoid if this code is ever refactored to accept more flexible
+    input. Captured as
+    `test_teardown_boundary_check_documented_prefix_weakness`.
+
+    Status: OPEN (defense-in-depth hardening, not urgent).
+
+## Fase 2 Batch 3 findings (library.py, sift_toolkit.py) — FIXED
+
+17. **`library.py`: `lzma.LZMAFile(fileobj=...)` uses a non-existent
+    keyword argument.** Python's `lzma.LZMAFile` API names this parameter
+    `filename` (which also accepts file-like objects) -- `fileobj` doesn't
+    exist. Present in 2 call sites (`_fetch_nvd_recent`,
+    `seed_full_nvd_archive`). This meant NVD CVE database sync has
+    silently failed with `TypeError` (caught by a broad
+    `except Exception`) on every single invocation since project
+    inception -- the core "auto-updating threat intelligence" feature has
+    never actually worked.
+
+    Status: **FIXED**. Both occurrences now pass the BytesIO object
+    positionally instead of via `fileobj=`.
+
+18. **`library.py`: `analyze_artifact()`'s keyword matching checked
+    substring containment backwards.** The full (often long, decorated)
+    `artifact_name` was checked as a substring INSIDE the short
+    "cve_id + description" text, which only succeeds when `artifact_name`
+    IS almost exactly the bare CVE ID. Any realistic filename (e.g.
+    `"suspicious_cve-2026-0006_dropper.exe"`) never matched, despite the
+    CVE-year regex correctly narrowing the search first.
+
+    Status: **FIXED**. Redesigned with two correctly-directed checks: (a)
+    a full CVE-ID pattern extracted from `artifact_name` gets a direct
+    O(1) dict lookup as a fast/precise path, (b) `context_hints` (short,
+    curated keywords) keep the original correct direction
+    (hint-in-description), (c) the extracted CVE ID is checked for
+    containment WITHIN `artifact_name`/hints as a fallback. Deduped via
+    `matched_cve_ids` to avoid double-counting.
+
+19. **`sift_toolkit.py`: `_run_subprocess`'s "timed out" error message was
+    effectively dead code.** It inferred a timeout from
+    `process.returncode is None`, but `_stream_process_output` already
+    reaps the just-killed process via `process.wait()` before returning
+    -- so `returncode` is essentially never still `None` by the time the
+    caller checks it. Callers got a generic `"tool returned -9"` message
+    instead of the intended `"execution timed out after Xs"` message.
+
+    Status: **FIXED**. `_stream_process_output` now returns an explicit
+    `timed_out` flag (3-tuple return) instead of inferring it from
+    `returncode`. Applied to both call sites (`_run_subprocess`,
+    `_run_pipe`).
+
+20. **`sift_toolkit.py`: genuine race condition in
+    `_stream_process_output`'s main loop.** `process.poll() is not None`
+    was checked FIRST every iteration, breaking immediately if the
+    process had already exited -- for fast commands (e.g. `echo`), the
+    child could finish before the loop ever attempted a single read,
+    discarding output still sitting unread in the OS pipe buffer.
+    Confirmed via 5x repeated local test runs: intermittent, different
+    tests failed each run (classic race-condition signature).
+
+    Status: **FIXED**. The loop no longer uses `poll()` as an exit
+    signal at all -- pipes are tracked in a set and only dropped on an
+    actual EOF (empty read), so buffered output is always drained
+    regardless of whether the process has already exited. Verified
+    stable across 5 consecutive full-suite runs post-fix.
+
+## Fase 3 Batch 3 findings (router.py, harness.py)
+
+21. **`router.py`: `execute_autonomous_triage`'s ReAct loop has no branch
+    for OS-level execution failures.** If an LLM-proposed `freeze`/`thaw`
+    action passes veto (target PID isn't protected) but fails at the OS
+    level (e.g. `os_bridge` returns `GHOST_PROCESS` for a PID that no
+    longer exists, or a generic `ERROR`), `_evaluate_intent`'s result
+    doesn't match any of the loop's explicit status checks (`REJECTED`,
+    `SELF_CORRECTION_REQUIRED`, `SUCCESS`-and-not-vetoed, `VETOED`). The
+    loop silently proceeds to the next iteration without appending any
+    `[SYSTEM FEEDBACK]` to `current_context` -- unlike every other
+    rejection path, which explains to the LLM what went wrong. The LLM
+    has no signal that its action failed and may repeat an identical
+    response, burning iterations until `max_iterations` triggers Shadow
+    Net escalation with no useful diagnostic trail.
+
+    Captured as: `tests/unit/test_router.py::test_triage_os_level_failure_gets_system_feedback_and_can_recover`
+
+    Status: **FIXED (Fase 5).** Added an explicit fallback branch after
+    the `VETOED` check: any status that isn't `REJECTED`,
+    `SELF_CORRECTION_REQUIRED`, `SUCCESS`-and-not-vetoed, or `VETOED` now
+    appends a `[SYSTEM FEEDBACK]` entry to `current_context` with the
+    status and reason (checking both `message` and `reason` keys, since
+    `os_bridge` uses `reason` while the harness's own veto message uses
+    `message`), then `continue`s to let the LLM retry with that
+    information. Two tests cover this: one confirms recovery when the
+    condition clears on the next iteration
+    (`test_triage_os_level_failure_gets_system_feedback_and_can_recover`),
+    and one confirms it still escalates to Shadow Net rather than looping
+    forever if the condition never clears
+    (`test_triage_persistent_os_level_failure_eventually_escalates`).
+
+22. **`harness.py`: `process_intent`'s trailing "no OS routing defined"
+    branch is dead code.** `self.allowed_actions` is exactly
+    `["freeze", "thaw"]`; `_veto_check` rejects any action outside that
+    list before the dispatch logic runs, and the dispatch logic
+    explicitly handles both remaining actions. No input can reach the
+    trailing `{"status": "ERROR", "message": "Action valid but no OS
+    routing defined..."}` branch.
+
+    Status: **Confirmed via regression test**
+    (`tests/unit/test_harness.py::test_no_action_value_can_reach_the_trailing_no_routing_branch`),
+    not removed (harmless dead code, low priority cleanup -- would only
+    matter if `allowed_actions` grows without a matching dispatch branch,
+    which the new test now guards against).
+
+## Real bug found via cross-environment testing (Codespaces), now fixed
+
+23. **`shadow_net.py`'s `__init__` relied solely on `os.umask(0o077)` to
+    secure `recovery_dir`'s permissions — insufficient on filesystems with
+    default POSIX ACLs.** Reported from a GitHub Codespaces devcontainer:
+    mode came out **`0o756` (world-writable, `S_IWOTH` set)**,
+    deterministically reproducible (same value across multiple runs, not
+    a race) — impossible to reach via `umask(0o077)` math alone (umask can
+    only clear bits, never introduce `rw-` for other). Root cause: per
+    POSIX, when a directory has a default ACL, new children inherit
+    permissions from that ACL and **umask is bypassed entirely** — some
+    Codespaces devcontainer filesystems apparently have such a default ACL
+    on the relevant mount.
+
+    **Verified real** (not environment noise) by reproducing the exact
+    failure mode locally: mocking `os.makedirs` to simulate an
+    ACL-override to `0o756`, confirming the *original* code would produce
+    a world-writable recovery vault under that condition.
+
+    Status: **FIXED.** `__init__` now calls `os.chmod(recovery_dir, 0o700)`
+    explicitly right after `os.makedirs()`, which is guaranteed to set the
+    exact permission regardless of umask/ACL interactions on any
+    filesystem — `chmod` doesn't go through umask calculation at all.
+    Verified the fix defeats the exact simulated ACL-override scenario
+    that reproduces the original bug. Test restored to an exact
+    `mode == 0o700` assertion (previously loosened to "not
+    group/other-writable" as a stop-gap before the real fix was
+    identified — that loosening is no longer needed now that the
+    permission is explicitly guaranteed).
+
+## Fase 5 findings (stamp.py coverage work)
+
+24. **`yomi_audit/stamp.py`'s `cleanup_corrupt_backups(retain_last=N)`
+    counts individual files, not incidents.** Each call to
+    `_backup_corrupted_ledger` writes *two* files -- the `.jsonl` copy of
+    the corrupted ledger, and a `.metadata.json` sidecar written
+    immediately after it. `cleanup_corrupt_backups` lists every file
+    whose name starts with the backup prefix, sorts that flat list by
+    mtime, and retains the first `retain_last` entries -- treating the
+    `.jsonl` and its `.metadata.json` as two independent, unrelated
+    files rather than one paired incident. So `retain_last=1` does not
+    mean "keep the most recent full incident"; it means "keep the single
+    most-recently-modified file on disk", which in practice is always
+    the `.metadata.json` (written after its `.jsonl` pair). The result:
+    `retain_last=1` can leave a lone `.metadata.json` on disk with no
+    matching `.jsonl` backup beside it.
+
+    This is not data loss of the *ledger itself* (the live ledger and
+    its HMAC chain are untouched -- this only affects retention of
+    corruption-recovery backups) and not exploitable by an attacker, but
+    it means the retention guarantee implied by the parameter name
+    doesn't hold, and an operator relying on `retain_last=1` "for safety"
+    could end up with less than they expect if they ever need to inspect
+    a backup after a corruption event.
+
+    Captured as:
+    `tests/unit/test_stamp_coverage.py::test_cleanup_corrupt_backups_retain_last_counts_files_not_incidents`
+
+    Status: OPEN. Straightforward fix would be to group files by their
+    shared incident prefix (everything before `.jsonl`/`.metadata.json`)
+    before sorting/retaining, so a `.jsonl` and its `.metadata.json`
+    are always kept or deleted together. Not fixed here (found while
+    writing coverage tests for #12, not itself a test-writing task);
+    flagged for whoever next touches this function.
+
+## Fase 6 findings (Guardian Orchestrator integration work)
+
+25. **Two parallel env-var gating mechanisms for the same decision.**
+    `mirage.py`'s `deploy_hallucination()` checks its OWN internal env
+    var (`YOMI_ENABLE_MIRAGE_MODE`) in addition to whatever
+    `module_registry`'s `YOMI_MODULE_MIRAGE` decided -- two separate
+    toggles an operator could set inconsistently (e.g.
+    `YOMI_MODULE_MIRAGE=true` but forgetting `YOMI_ENABLE_MIRAGE_MODE`,
+    silently getting no deception behavior despite the registry saying
+    it's on).
+
+    Status: **WORKED AROUND, not removed.** `GuardianOrchestrator` calls
+    `deploy_hallucination(..., force_enable=True)`, deliberately
+    bypassing `mirage.py`'s own env check -- the enable/disable decision
+    is made once, at the registry level, before Guardian ever calls it.
+    `mirage.py`'s own env var is left in place for backward
+    compatibility with direct/manual invocation (e.g. someone running
+    `python3 yomi_engine/mirage.py` directly, or a future CLI flag).
+    Genuinely removing the duplicate mechanism (making
+    `YOMI_ENABLE_MIRAGE_MODE` simply not exist) would be a larger,
+    separate cleanup -- not done here since it risks breaking existing
+    `tests/unit/test_mirage.py` assertions that specifically test that
+    env var's behavior.
+
+26. **Ghost Protocol and the eBPF Sensor bypassed `module_registry`
+    entirely in `cli.py`.** Ghost Protocol was gated by its own ad-hoc
+    `YOMI_ENABLE_GHOST_PROTOCOL` env var, never by
+    `module_registry`'s `YOMI_MODULE_GHOST`. Worse: the eBPF Sensor
+    had **no gating at all** -- `cli.py` unconditionally
+    `subprocess.Popen`'d it on every `--auto` startup, completely
+    ignoring `EBPF_SENSOR`'s `default_enabled=False` in the registry.
+
+    Status: **FIXED (Fase 6, Tahap 1).** Both now go through
+    `GuardianOrchestrator.bootstrap_startup_daemons()`, which consults
+    `module_registry.resolve_active_modules()` exclusively. Operators
+    who previously relied on `YOMI_ENABLE_GHOST_PROTOCOL=true` must
+    switch to `YOMI_MODULE_GHOST=true` -- this is a deliberate breaking
+    change to the env var name, made now (Fase 6) rather than carrying
+    the inconsistency into the public release. Documented in
+    `docs/usage.md` and the Fase 6 release notes. Tests:
+    `tests/unit/test_guardian.py::test_bootstrap_ghost_*` and
+    `::test_bootstrap_ebpf_sensor_*` (6 tests total).
+
+27. **`pip install .` packages `yomi_data/` like any other Python
+    module, so the evidence ledger/notary checkpoint/CVE store/HMAC key
+    for a `pip`-installed daemon end up inside the venv's
+    `site-packages/yomi_data/`, not anywhere an operator would
+    intuitively look.** Not a bug in the sense of broken functionality
+    -- `ImmutableStamp`/`OmniLibrary`'s `__file__`-relative path
+    resolution finds it fine -- but for a DFIR tool, the evidence
+    store's location needs to be predictable and documented, not
+    implicit inside a venv's package directory.
+
+    Status: OPEN. Worked around for now by printing the exact resolved
+    path at the end of `scripts/install_yomi_linux.sh`. A real fix
+    would be a `YOMI_DATA_DIR` env var override respected by
+    `ImmutableStamp`, `OmniLibrary`, and everything else that currently
+    does `os.path.join(os.path.dirname(__file__), "..", "yomi_data")`,
+    defaulting to a standard Linux FHS location like
+    `/var/lib/yomi-triage` for `pip`-installed daemons. That's a
+    broader, cross-cutting change (touches every module with
+    `__file__`-relative data paths) -- flagged for Fase 6 Tahap 2, not
+    done here.
+
+28. **A dev/test `yomi_data/audit_hmac.key` already present in the
+    checkout gets silently copied into a "production" install via
+    `pip install .`.** If someone ran the test suite or `cli.py --auto`
+    locally before running the installer, that HMAC key -- not a fresh
+    production key -- would end up signing the real evidence ledger.
+
+    Status: **MITIGATED (Fase 6, Tahap 1).**
+    `scripts/install_yomi_linux.sh` detects a pre-existing
+    `yomi_data/audit_hmac.key` before installing and requires explicit
+    interactive confirmation (`Continue anyway and reuse this key?
+    [y/N]`) before proceeding, rather than silently continuing or
+    silently deleting a key an operator might have a legitimate reason
+    to keep. Not a full fix -- `setup.py`'s packaging behavior itself
+    (including data files it shouldn't) is the root cause, same as #27
+    above, and a real fix likely means addressing both together.

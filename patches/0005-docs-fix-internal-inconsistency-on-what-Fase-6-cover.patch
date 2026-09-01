@@ -1,0 +1,79 @@
+From c4ddf054dcf37796c42eb8c0feaaf0cd001454b3 Mon Sep 17 00:00:00 2001
+From: Yomi Session <kurotech@yomi.local>
+Date: Mon, 24 Aug 2026 03:39:52 +0000
+Subject: [PATCH 5/7] docs: fix internal inconsistency on what Fase 6 covers
+
+phase_log/README.md's table correctly said Fase 6 = Guardian
+Orchestrator + Module Registry integration, THEN Release + KuroTech
+landing page (both under Fase 6). But fase_5.md's own text
+contradicted that, treating the integration work as happening BEFORE
+Fase 6 and defining Fase 6 as release-only. Aligned fase_5.md and
+docs/roadmap/dfir-depth.md to the correct single definition: Fase 6
+starts with Guardian Orchestrator/Module Registry integration, and
+Release+landing page is planned concretely once that integration is
+solid -- both are Fase 6, not two separate phases.
+---
+ docs/phase_log/fase_5.md   | 30 ++++++++++++++----------------
+ docs/roadmap/dfir-depth.md |  3 ++-
+ 2 files changed, 16 insertions(+), 17 deletions(-)
+
+diff --git a/docs/phase_log/fase_5.md b/docs/phase_log/fase_5.md
+index b6c9b65..2125b5d 100644
+--- a/docs/phase_log/fase_5.md
++++ b/docs/phase_log/fase_5.md
+@@ -248,24 +248,22 @@ target insiden nyata praktis selalu >100.
+ ## Sisa pekerjaan (belum di sesi ini)
+ 
+ 1. **Semua 4 gerbang wajib pra-Fase 6 (#12, #13, #14, #15, #21) sudah
+-   FIXED.** Langkah selanjutnya (di luar cakupan dokumen ini) adalah
+-   **Guardian Orchestrator + Module Registry** — "great integration"
+-   yang menyambungkan semua modul (`mind_reader`, `shadow_net`,
+-   `remediator`, `dossier`, `mirage`, `sandbox`, `ghost`,
+-   `ebpf_sensor`) ke autonomous loop `sentinel.py` sebagai background
++   FIXED.** Langkah selanjutnya adalah **Fase 6 itu sendiri**, dimulai
++   dari **Guardian Orchestrator + Module Registry** ("great
++   integration" -- menyambungkan semua modul: `mind_reader`,
++   `shadow_net`, `remediator`, `dossier`, `mirage`, `sandbox`, `ghost`,
++   `ebpf_sensor` ke autonomous loop `sentinel.py` sebagai background
+    process, bukan cuma reachable lewat `if __name__ == "__main__"`
+-   masing-masing file. Ini juga menutup #11 (sentinel wiring 5/13
+-   modul) dan menyiapkan keputusan arsitektur untuk #9 (ImmutableStamp
+-   singleton + hardcoded path).
++   masing-masing file). Ini menutup #11 (sentinel wiring 5/13 modul) dan
++   menyiapkan keputusan arsitektur untuk #9 (ImmutableStamp singleton +
++   hardcoded path). GitHub Release + landing page KuroTech direncanakan
++   secara konkret setelah bagian integrasi ini solid -- **keduanya
++   sama-sama bagian dari Fase 6**, bukan dua fase terpisah.
+ 2. Jalankan `scripts/create_known_issues_fase5.sh` (buat issue GitHub
+-   baru #24, tutup #14/#15/#23 lama untuk #12/#13/#21 -- *catatan: nomor
+-   GitHub #14/#15 di situ untuk stamp-coverage & checkpoint-message,
+-   BEDA skema penomoran dengan #14/#15 remediator.py di known_issues.md
+-   lokal repo ini*). Perlu ditambah langkah penutupan issue GitHub untuk
+-   #14/#15 remediator.py juga (nomor GitHub-nya belum dikonfirmasi).
+-3. Setelah Guardian Orchestrator + Module Registry solid, baru
+-   rencanakan **Fase 6** (GitHub Release + landing page KuroTech) secara
+-   konkret.
++   baru #24, tutup #14/#15/#16/#17/#23 lama -- *catatan: nomor GitHub
++   #14/#15 di situ untuk stamp-coverage & checkpoint-message, BEDA
++   dengan #14/#15 remediator.py di known_issues.md lokal repo ini, yang
++   nomor GitHub-nya #16/#17*).
+ 
+ ## Ringkasan angka
+ 
+diff --git a/docs/roadmap/dfir-depth.md b/docs/roadmap/dfir-depth.md
+index 7591935..819d19d 100644
+--- a/docs/roadmap/dfir-depth.md
++++ b/docs/roadmap/dfir-depth.md
+@@ -1,7 +1,8 @@
+ # Roadmap: Kedalaman DFIR ("Sedalam Palung Mariana")
+ 
+ **Status:** Visi resmi, belum mulai dikerjakan. Ditulis Fase 4, dieksekusi
+-setelah Fase 6 (Release + KuroTech landing page) selesai.
++setelah Fase 6 (Guardian Orchestrator + Module Registry, lalu Release +
++KuroTech landing page) selesai.
+ 
+ ## Latar belakang
+ 
+-- 
+2.43.0
+
