@@ -1,4 +1,4 @@
-# Fase 5 — README Split + 3 Gerbang Wajib Pra-Fase 6 (#12, #13, #21)
+# Fase 5 — README Split + 4 Gerbang Wajib Pra-Fase 6 (#12, #13, #14, #15, #21)
 
 **Status:** SELESAI · **Branch:** `docs/readme-split`
 
@@ -16,9 +16,12 @@
 2. **Issue #13** (checkpoint mismatch message menyesatkan) — dibarengin
    sama beres-beres dokumentasi, sesuai keputusan triase.
 3. Dua dari empat gerbang wajib sebelum Fase 6: **#21** (router.py no
-   OS-level feedback) dan **#12** (stamp.py coverage 54%). *(#14 dan #15,
-   remediator.py, belum dikerjakan sesi ini — lihat "Sisa pekerjaan" di
-   bawah.)*
+   OS-level feedback) dan **#12** (stamp.py coverage 54%).
+4. **Update lanjutan (di luar sesi kerja awal, sebelum lanjut ke
+   integrasi Guardian Orchestrator)**: dua gerbang wajib terakhir,
+   **#14** dan **#15** (`remediator.py`), diselesaikan juga -- lihat
+   bagian "5. Issue #14 & #15" di bawah. Dengan ini, **semua 4 gerbang
+   wajib pra-Fase 6 sudah FIXED**.
 
 ## 1. README Split
 
@@ -196,22 +199,78 @@ tersendiri sesi ini, jadi tidak diperbaiki sekarang.
 - Tidak ada regresi di `test_stamp.py` maupun `test_router.py` yang sudah
   ada.
 
+## 5. Issue #14 & #15 — remediator.py: proteksi PID kritis + path containment
+
+**#14 — tidak ada proteksi PID kritis.** `_validate_payload` di
+`remediator.py` nggak punya padanan `harness.py`'s PID<=100 hardblock —
+payload yang menargetkan PID 1 (init) berhasil generate rollback script.
+
+**Fix:** tambahkan blok `if pid <= 100: return False, ...` persis di
+awal validasi, sebelum pengecekan lain. **Sengaja tidak** menambahkan
+pengecekan psutil-based ala `harness.py` (yang fail-safe memproteksi
+kalau `NoSuchProcess`) — karena tujuan desain `remediator.py` justru
+kebalikan: harus tetap bisa generate rollback script walau PID/file
+sudah hilang (malware fileless yang self-delete). Menambahkan fail-safe
+serupa `harness.py` di sini justru mengalahkan tujuan desainnya sendiri.
+
+**#15 — critical path check exact-match, bukan containment.**
+`/bin/bash` dan `/etc/passwd` lolos validasi karena pengecekan cuma
+membandingkan persis terhadap string direktori telanjang (`"/bin"`,
+`"/etc"`), bukan path di dalamnya.
+
+**Fix:** ganti jadi pengecekan containment path sungguhan pakai
+`pathlib` (`resolved == critical` atau `critical in resolved.parents`)
+— **secara sadar TIDAK dibuat pakai `.startswith()`**, karena itu
+persis kelas bug yang sudah dicatat di #16/#18 untuk `mirage.py`
+(`.startswith("/etc")` juga salah-cocok ke `/etcetera/file`). `/`
+sengaja tetap exact-match saja, bukan containment — karena secara
+teknis semua path absolut itu "di bawah" `/`, jadi kalau dipakai
+sebagai boundary containment, semua payload bakal ketolak.
+
+Test baru di `tests/unit/test_remediator.py` (6 test menggantikan 2 test
+`KNOWN_GAP` lama total, bukan cuma di-skip):
+`test_low_numbered_pid_is_now_protected`,
+`test_pid_exactly_100_is_still_protected`,
+`test_pid_101_is_not_blocked_by_the_low_pid_rule`,
+`test_critical_path_containment_now_blocks_files_inside_protected_dirs`,
+`test_critical_path_containment_does_not_repeat_mirage_startswith_bug`,
+`test_root_path_is_still_exact_match_only_not_containment`.
+
+**Verifikasi:** 452/452 unit test lulus (root), **451 passed + 1
+skipped sebagai non-root, stabil 5x run berturut-turut**. Lint bersih,
+5 integration test lulus, 1 benchmark test lulus (dijalankan terpisah
+karena `./run_tests.sh` penuh kena timeout tooling di sandbox saya —
+bukan indikasi masalah kode, tiap komponennya lulus sendiri-sendiri).
+Tidak ada pemanggil lain `ReverserEngine` (`shadow_net.py`) yang
+terdampak — di test-nya `ReverserEngine` di-mock, dan di produksi PID
+target insiden nyata praktis selalu >100.
+
 ## Sisa pekerjaan (belum di sesi ini)
 
-1. Issue **#14** — `remediator.py` tidak ada proteksi PID kritis.
-2. Issue **#15** — `remediator.py` path-check exact-match, bukan prefix.
-3. Jalankan `scripts/create_known_issues_fase5.sh` (buat issue GitHub
-   baru #24, tutup #14/#15/#23 lama — *catatan: nomor GitHub #14/#15 di
-   sini adalah untuk stamp-coverage & checkpoint-message, JANGAN
-   tertukar sama rencana remediator.py #14/#15 di known_issues.md
-   penomoran lokal, yang beda skema*).
-4. Setelah #14 dan #15 (remediator.py) beres, baru declare 4-issue-
-   prioritas pra-Fase-6 selesai semua, lanjut ke **Fase 6** (Release +
-   landing page KuroTech).
+1. **Semua 4 gerbang wajib pra-Fase 6 (#12, #13, #14, #15, #21) sudah
+   FIXED.** Langkah selanjutnya adalah **Fase 6 itu sendiri**, dimulai
+   dari **Guardian Orchestrator + Module Registry** ("great
+   integration" -- menyambungkan semua modul: `mind_reader`,
+   `shadow_net`, `remediator`, `dossier`, `mirage`, `sandbox`, `ghost`,
+   `ebpf_sensor` ke autonomous loop `sentinel.py` sebagai background
+   process, bukan cuma reachable lewat `if __name__ == "__main__"`
+   masing-masing file). Ini menutup #11 (sentinel wiring 5/13 modul) dan
+   menyiapkan keputusan arsitektur untuk #9 (ImmutableStamp singleton +
+   hardcoded path). GitHub Release + landing page KuroTech direncanakan
+   secara konkret setelah bagian integrasi ini solid -- **keduanya
+   sama-sama bagian dari Fase 6**, bukan dua fase terpisah.
+2. Jalankan `scripts/create_known_issues_fase5.sh` (buat issue GitHub
+   baru #24, tutup #14/#15/#16/#17/#23 lama -- *catatan: nomor GitHub
+   #14/#15 di situ untuk stamp-coverage & checkpoint-message, BEDA
+   dengan #14/#15 remediator.py di known_issues.md lokal repo ini, yang
+   nomor GitHub-nya #16/#17*).
 
 ## Ringkasan angka
 
-- Total temuan di `docs/known_issues.md`: **24** (#1-24), naik dari 23.
-- 3 temuan lama (#12, #13, #21) berubah status jadi **FIXED**.
+- Total temuan di `docs/known_issues.md`: **24** (#1-24).
+- **5 temuan** (#12, #13, #14, #15, #21) berubah status jadi **FIXED**
+  — semua 4 gerbang wajib pra-Fase 6, plus #12 sebagai bagian dari
+  paket yang sama.
 - 1 temuan baru (#24) ditambahkan, status **OPEN**.
-- Total test suite: **448/448** hijau, stabil 5x run berturut-turut.
+- Total test suite: **452/452** hijau (unit) sebagai root, **451
+  passed + 1 skipped** sebagai non-root, stabil 5x run berturut-turut.
