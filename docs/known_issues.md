@@ -85,6 +85,49 @@ sessions or phases, and each entry says whether it's fixed yet.
     `if __name__ == "__main__"`. This is what `yomi_core/module_registry.py`
     (Fase 4-5, Guardian orchestrator) is being built to fix.
 
+    Status: **FIXED (Fase 6, Tahap 1).** `yomi_core/guardian.py`'s
+    `GuardianOrchestrator` now wires all 8 modules into
+    `sentinel.py`'s autonomous loop, gated entirely by
+    `module_registry.resolve_active_modules()`:
+    - `handle_post_containment(target_pid)` fires after a SYNCHRONOUS
+      containment success (the instant CRITICAL SIGSTOP path, or a
+      harness `status=="SUCCESS"`/`action=="FROZEN"` result) and
+      dispatches `MIND_READER`, `REMEDIATOR`, `SANDBOX`, and `MIRAGE` (in
+      that order, each independently try/except-guarded).
+    - `handle_escalation(target_pid, reason)` fires on
+      `ESCALATED_TO_SHADOW_NET` and fire-and-forget dispatches
+      `SHADOW_NET` -- deliberately does NOT chain further modules off of
+      it, since `deploy_micro_hook()` spawns its own monitoring thread
+      and its outcome isn't known synchronously (see the module
+      docstring's constraint #2 for the full reasoning).
+    - `generate_incident_dossier()` fires unconditionally at the end of
+      every `_zero_prompt_trigger` cycle if `DOSSIER` is enabled.
+    - `periodic_maintenance()` sweeps orphaned `MIRAGE` decoys every 20
+      sentinel cycles (not per-incident).
+    - `bootstrap_startup_daemons()` wires `GHOST` and `EBPF_SENSOR` at
+      CLI startup (see #26 below -- this replaces two previously
+      ungated/mis-gated call sites in `cli.py`).
+
+    Every dispatch is wrapped in try/except and logged to the ledger on
+    failure (`<MODULE>_DISPATCH_ERROR`) rather than raised, so one
+    misbehaving module (e.g. Radare2 missing, a sandbox mount failing)
+    can never take down the observation loop or block modules after it.
+
+    Tests: `tests/unit/test_guardian.py` (25 tests, 93% coverage of
+    `guardian.py`), plus new end-to-end assertions in
+    `tests/integration/test_chain_sentinel_router_harness.py` proving
+    real dispatch against a REAL subprocess PID (not mocked) -- the
+    real containment path resolves `/proc/<pid>/exe` to the actual
+    python3 interpreter, `REMEDIATOR` correctly refuses it via the #15
+    path-containment fix (python3 lives under `/usr`), and `DOSSIER`
+    generates a real signed report, all verified via ledger entries.
+
+    **Explicitly NOT touched by this fix:** #9 (ImmutableStamp
+    singleton / single-tenant architecture) -- multi-tenant concurrent
+    investigation remains a separate, deferred architectural decision.
+    Guardian assumes the same single-investigation-per-process model
+    `sentinel.py` already used.
+
 ## Style/lint backlog (not blocking, tracked for later per-package cleanup)
 
 - 19x `S110` (try/except/pass without logging) across
@@ -371,3 +414,124 @@ sessions or phases, and each entry says whether it's fixed yet.
     are always kept or deleted together. Not fixed here (found while
     writing coverage tests for #12, not itself a test-writing task);
     flagged for whoever next touches this function.
+
+## Fase 6 findings (Guardian Orchestrator integration work)
+
+25. **Two parallel env-var gating mechanisms for the same decision.**
+    `mirage.py`'s `deploy_hallucination()` checks its OWN internal env
+    var (`YOMI_ENABLE_MIRAGE_MODE`) in addition to whatever
+    `module_registry`'s `YOMI_MODULE_MIRAGE` decided -- two separate
+    toggles an operator could set inconsistently (e.g.
+    `YOMI_MODULE_MIRAGE=true` but forgetting `YOMI_ENABLE_MIRAGE_MODE`,
+    silently getting no deception behavior despite the registry saying
+    it's on).
+
+    Status: **WORKED AROUND, not removed.** `GuardianOrchestrator` calls
+    `deploy_hallucination(..., force_enable=True)`, deliberately
+    bypassing `mirage.py`'s own env check -- the enable/disable decision
+    is made once, at the registry level, before Guardian ever calls it.
+    `mirage.py`'s own env var is left in place for backward
+    compatibility with direct/manual invocation (e.g. someone running
+    `python3 yomi_engine/mirage.py` directly, or a future CLI flag).
+    Genuinely removing the duplicate mechanism (making
+    `YOMI_ENABLE_MIRAGE_MODE` simply not exist) would be a larger,
+    separate cleanup -- not done here since it risks breaking existing
+    `tests/unit/test_mirage.py` assertions that specifically test that
+    env var's behavior.
+
+26. **Ghost Protocol and the eBPF Sensor bypassed `module_registry`
+    entirely in `cli.py`.** Ghost Protocol was gated by its own ad-hoc
+    `YOMI_ENABLE_GHOST_PROTOCOL` env var, never by
+    `module_registry`'s `YOMI_MODULE_GHOST`. Worse: the eBPF Sensor
+    had **no gating at all** -- `cli.py` unconditionally
+    `subprocess.Popen`'d it on every `--auto` startup, completely
+    ignoring `EBPF_SENSOR`'s `default_enabled=False` in the registry.
+
+    Status: **FIXED (Fase 6, Tahap 1).** Both now go through
+    `GuardianOrchestrator.bootstrap_startup_daemons()`, which consults
+    `module_registry.resolve_active_modules()` exclusively. Operators
+    who previously relied on `YOMI_ENABLE_GHOST_PROTOCOL=true` must
+    switch to `YOMI_MODULE_GHOST=true` -- this is a deliberate breaking
+    change to the env var name, made now (Fase 6) rather than carrying
+    the inconsistency into the public release. Documented in
+    `docs/usage.md` and the Fase 6 release notes. Tests:
+    `tests/unit/test_guardian.py::test_bootstrap_ghost_*` and
+    `::test_bootstrap_ebpf_sensor_*` (6 tests total).
+
+27. **`pip install .` packages `yomi_data/` like any other Python
+    module, so the evidence ledger/notary checkpoint/CVE store/HMAC key
+    for a `pip`-installed daemon end up inside the venv's
+    `site-packages/yomi_data/`, not anywhere an operator would
+    intuitively look.** Not a bug in the sense of broken functionality
+    -- `ImmutableStamp`/`OmniLibrary`'s `__file__`-relative path
+    resolution finds it fine -- but for a DFIR tool, the evidence
+    store's location needs to be predictable and documented, not
+    implicit inside a venv's package directory.
+
+    Status: OPEN. Worked around for now by printing the exact resolved
+    path at the end of `scripts/install_yomi_linux.sh`. A real fix
+    would be a `YOMI_DATA_DIR` env var override respected by
+    `ImmutableStamp`, `OmniLibrary`, and everything else that currently
+    does `os.path.join(os.path.dirname(__file__), "..", "yomi_data")`,
+    defaulting to a standard Linux FHS location like
+    `/var/lib/yomi-triage` for `pip`-installed daemons. That's a
+    broader, cross-cutting change (touches every module with
+    `__file__`-relative data paths) -- flagged for Fase 6 Tahap 2, not
+    done here.
+
+28. **A dev/test `yomi_data/audit_hmac.key` already present in the
+    checkout gets silently copied into a "production" install via
+    `pip install .`.** If someone ran the test suite or `cli.py --auto`
+    locally before running the installer, that HMAC key -- not a fresh
+    production key -- would end up signing the real evidence ledger.
+
+    Status: **MITIGATED (Fase 6, Tahap 1).**
+    `scripts/install_yomi_linux.sh` detects a pre-existing
+    `yomi_data/audit_hmac.key` before installing and requires explicit
+    interactive confirmation (`Continue anyway and reuse this key?
+    [y/N]`) before proceeding, rather than silently continuing or
+    silently deleting a key an operator might have a legitimate reason
+    to keep. Not a full fix -- `setup.py`'s packaging behavior itself
+    (including data files it shouldn't) is the root cause, same as #27
+    above, and a real fix likely means addressing both together.
+
+29. **`sandbox.py`'s `_monitor_awakened_threat` bypassed `module_registry`
+    entirely when re-invoking `MindReaderDecompiler` and `MirageProtocol`
+    after the post-detonation observation window** -- the same bug class
+    as #26, found while actually running a full `DEMO_PROFILE_ENV`
+    scenario end-to-end (not from reading the code). This is a SEPARATE
+    call site from `GuardianOrchestrator`'s own pre-detonation dispatch,
+    which already respected the registry -- so disabling `MIND_READER` or
+    `MIRAGE` via env var had no effect on this specific post-detonation
+    re-analysis pass.
+
+    Status: **FIXED (Fase 6, Tahap 1).** Both calls now check
+    `module_registry.resolve_active_modules()` first, matching every
+    other dispatch site. Regression tests:
+    `tests/unit/test_sandbox.py::test_monitor_awakened_threat_respects_disabled_mirage_and_mind_reader`
+    (proves both stay uncalled when disabled), plus the two pre-existing
+    tests updated to explicitly enable `MIRAGE` (previously they passed
+    without needing to, since the old code never checked).
+
+30. **Asymmetric Mirage decoy lifecycle when `SANDBOX` is enabled.** A
+    single incident against one PID can end up with TWO independent
+    Mirage decoys deployed for it: one from
+    `GuardianOrchestrator.handle_post_containment` (pre-detonation
+    dispatch), one from `sandbox.py`'s own `_monitor_awakened_threat`
+    (post-detonation re-analysis, see #29 above). `sandbox.py` tears
+    down its OWN decoy immediately after the observation window closes --
+    but `guardian.py` never calls `teardown_hallucination()` for the one
+    it deployed, leaving it to be cleaned up later (if at all before the
+    process genuinely dies) by `periodic_maintenance()`'s
+    `sweep_orphaned_hallucinations()` sweep. Not a security hole (the
+    decoy is inert once the underlying process is gone) and not silent
+    data loss, but the ledger will show two `HALLUCINATION_DEPLOYED`
+    entries and only one `HALLUCINATION_TEARDOWN` for the same PID during
+    a `SANDBOX`-enabled run -- worth knowing so it doesn't read as a
+    ledger inconsistency. Found while capturing real demo output for
+    `docs/demo_mode.md`.
+
+    Status: OPEN. A real fix would have `GuardianOrchestrator` track and
+    tear down decoys it deployed itself, symmetric with `sandbox.py`'s
+    own handling -- not done here (found while writing documentation,
+    not itself a coding task this session).

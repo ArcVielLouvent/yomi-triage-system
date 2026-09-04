@@ -11,7 +11,7 @@
 > were cross-checked against the current codebase while writing
 > [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still hold true
 > as of Fase 5. For the automated, currently-passing test suite and its
-> real numbers, see [`docs/usage.md`](usage.md#3-performance--scalability-metrics)
+> real numbers, see [`docs/usage.md`](usage.md#5-performance--scalability-metrics)
 > and run `./run_tests.sh` yourself. For known gaps and their current
 > fix status (including the dossier-bias limitation described in
 > Section 3 below), see [`docs/known_issues.md`](known_issues.md).
