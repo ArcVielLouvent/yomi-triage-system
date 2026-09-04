@@ -245,15 +245,31 @@ class SandboxEnvironment:
     def _monitor_awakened_threat(
         self, original_pid, sandbox_pid, contained_path, container_info, process
     ):
-        from yomi_engine.mirage import MirageProtocol
-        from yomi_engine.mind_reader import MindReaderDecompiler
+        # [FIXED] Found during Fase 6 demo-scenario testing, same bug class
+        # as known_issues.md #26: this method used to call MirageProtocol()
+        # and MindReaderDecompiler() unconditionally, completely bypassing
+        # module_registry -- so disabling MIRAGE or MIND_READER via
+        # YOMI_MODULE_MIRAGE=false / YOMI_MODULE_MIND_READER=false had no
+        # effect on this post-detonation re-analysis pass (it's a SEPARATE
+        # call site from GuardianOrchestrator's own pre-detonation
+        # dispatch, which DOES respect the registry). See known_issues.md
+        # #29.
+        from yomi_core import module_registry
+
+        active = module_registry.resolve_active_modules()
+        mirage_enabled = "MIRAGE" in active
+        mind_reader_enabled = "MIND_READER" in active
 
         print(
             f"[*] Commencing Autonomous Interrogation on Sandbox PID {sandbox_pid}..."
         )
 
-        mirage = MirageProtocol()
-        mirage.deploy_hallucination(original_pid, os_target="LINUX", force_enable=True)
+        mirage = None
+        if mirage_enabled:
+            from yomi_engine.mirage import MirageProtocol
+
+            mirage = MirageProtocol()
+            mirage.deploy_hallucination(original_pid, os_target="LINUX", force_enable=True)
 
         try:
             process.communicate(timeout=15)
@@ -271,14 +287,23 @@ class SandboxEnvironment:
             pass
 
         time.sleep(0.5)
-        mirage.teardown_hallucination(original_pid, os_target="LINUX")
+        if mirage is not None:
+            mirage.teardown_hallucination(original_pid, os_target="LINUX")
 
         if os.path.exists(contained_path):
             os.chmod(contained_path, 0o500)
 
-        print(f"[*] Executing Mind-Reader Profiling on pristine forensic copy...")
-        decompiler = MindReaderDecompiler()
-        decompiler.decompile_and_profile(contained_path, original_pid)
+        if mind_reader_enabled:
+            from yomi_engine.mind_reader import MindReaderDecompiler
+
+            print(f"[*] Executing Mind-Reader Profiling on pristine forensic copy...")
+            decompiler = MindReaderDecompiler()
+            decompiler.decompile_and_profile(contained_path, original_pid)
+        else:
+            print(
+                "[*] MIND_READER is disabled in the module registry -- "
+                "skipping post-detonation profiling."
+            )
 
         self._cleanup_container_forceful(container_info)
         self.audit.record_action(

@@ -36,11 +36,25 @@ def sentinel(isolated_stamp, tmp_path, monkeypatch):
     from yomi_core import router as router_module
     from yomi_core import sentinel as sentinel_module
     from yomi_engine import swarm as swarm_module
+    from yomi_engine import remediator as remediator_module
+    from yomi_engine import dossier as dossier_module
+    from yomi_engine import library as library_module
 
     # Isolate every hardcoded-__file__-relative path this chain touches.
+    # As of Fase 6 (Guardian Orchestrator), _zero_prompt_trigger can
+    # dispatch REMEDIATOR, DOSSIER, and MIND_READER (which transitively
+    # constructs OmniLibrary) -- all default_enabled=True in
+    # module_registry -- so their __file__-relative data directories
+    # must be isolated here too, or a real subprocess PID resolving to a
+    # real binary (e.g. the python3 interpreter itself) causes real
+    # rollback scripts / dossiers to be written into the actual repo's
+    # yomi_data/ instead of tmp_path.
     fake_swarm_dir = tmp_path / "fake_pkg" / "yomi_engine"
     fake_swarm_dir.mkdir(parents=True)
     monkeypatch.setattr(swarm_module, "__file__", str(fake_swarm_dir / "swarm.py"))
+    monkeypatch.setattr(remediator_module, "__file__", str(fake_swarm_dir / "remediator.py"))
+    monkeypatch.setattr(dossier_module, "__file__", str(fake_swarm_dir / "dossier.py"))
+    monkeypatch.setattr(library_module, "__file__", str(fake_swarm_dir / "library.py"))
     monkeypatch.setattr("shutil.which", lambda name: None)
 
     # LLM boundary: don't hit a real API. Everything past this point
@@ -117,6 +131,24 @@ def test_critical_threat_chain_freezes_real_process_end_to_end(sentinel, isolate
             for l in lines
             if l["action_type"] == "AUTONOMOUS_CONTAINMENT"
         )
+
+        # 3. Guardian Orchestrator (Fase 6, known_issues.md #11) actually
+        #    dispatched off this SYNCHRONOUS containment: DOSSIER is
+        #    default-enabled and unconditional at end-of-incident, so it
+        #    must have run. REMEDIATOR is also default-enabled and DOES
+        #    get a resolvable binary_path here (the real python3
+        #    interpreter, from /proc/<pid>/exe) -- but that path is
+        #    correctly REJECTED by remediator's own #15 path-containment
+        #    fix (python3 lives under /usr, a protected system dir), so
+        #    we see REVERSER/ABORTED rather than a generated script. This
+        #    is the fix from #15 actually doing its job on a real path,
+        #    not a mock.
+        assert "REPORT_SIGNED" in action_types  # DOSSIER dispatched
+        assert "ABORTED" in action_types  # REMEDIATOR dispatched, correctly refused
+        assert any(
+            l["action_type"] == "ABORTED" and "critical system path" in l["description"].lower()
+            for l in lines
+        )
     finally:
         proc.kill()
         proc.wait(timeout=5)
@@ -157,6 +189,10 @@ def test_non_critical_anomaly_routes_through_full_llm_chain_without_instant_free
     # proving the full chain still ran end to end even without instant
     # containment.
     assert "VETO_ENGAGED" in action_types
+    # Guardian's end-of-incident DOSSIER dispatch is unconditional
+    # (doesn't require a valid target_pid or successful containment) --
+    # it must still fire even for this vetoed, no-PID outcome.
+    assert "REPORT_SIGNED" in action_types
 
 
 def test_threat_scoring_from_real_swarm_output_shape(sentinel):

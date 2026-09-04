@@ -43,8 +43,9 @@ Full prerequisites, OS packages, and environment configuration: [`docs/installat
 ## Running the tests
 
 ```bash
-./run_tests.sh          # lint + unit + integration + benchmarks
+./run_tests.sh          # lint + unit + integration + benchmarks + smoke
 ./run_tests.sh quick     # unit tests only, fastest loop
+./run_tests.sh smoke     # real end-to-end chain only, no pytest -- see docs/usage.md
 ```
 
 ---

@@ -171,7 +171,7 @@ stateDiagram-v2
     Rollback --> [*]
 ```
 
-> **Note on module wiring (in progress):** `sentinel.py`'s autonomous loop currently wires in `swarm`, `hunter`, `router`, `mitre_mapper`, and `telemetry`. Several other modules described below (`mind_reader`, `shadow_net`, `remediator`, `dossier`, `mirage`, `sandbox`, `ghost`, `ebpf_sensor`) exist and are independently tested, but are not yet called automatically from the autonomous loop -- only reachable via each file's own `if __name__ == "__main__"`. `yomi_core/module_registry.py` (Guardian orchestrator, in progress) is being built to close this gap. See [`docs/known_issues.md`](known_issues.md) for tracking.
+> **Module wiring (Fase 6, Tahap 1):** `sentinel.py`'s autonomous loop wires in all 13 modules via `yomi_core/guardian.py`'s `GuardianOrchestrator`, gated entirely by `yomi_core/module_registry.py`. `swarm`, `hunter`, `router`, `mitre_mapper`, and `telemetry` run every observation cycle; `mind_reader`, `remediator`, `dossier` dispatch after a synchronous containment success; `shadow_net` dispatches (fire-and-forget) on escalation; `sandbox` and `mirage` dispatch after containment if their invasive tier is explicitly enabled; `ghost` and `ebpf_sensor` are wired at CLI startup. See [`docs/known_issues.md`](known_issues.md) #11 for the full dispatch design and #25/#26 for two env-var gating inconsistencies found and fixed while wiring this.
 
 ## 3. Yomi Core Engines (The Arsenal)
 
