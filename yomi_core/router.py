@@ -449,6 +449,30 @@ class YomiRouter:
                 )
                 continue
 
+            # [FIXED] known_issues.md #21: an approved action (passed veto)
+            # can still fail at the OS level -- os_bridge returns statuses
+            # like GHOST_PROCESS (PID died before the syscall landed) or a
+            # generic ERROR (e.g. PermissionError). Those don't match any
+            # of the explicit branches above, so without this fallback the
+            # loop would silently retry with no [SYSTEM FEEDBACK] at all,
+            # unlike every other rejection path.
+            os_failure_status = eval_result.get("status")
+            os_failure_reason = (
+                eval_result.get("message")
+                or eval_result.get("reason")
+                or "No further detail was provided by the OS bridge."
+            )
+            print(
+                f"[YOMI-ROUTER] [BLOOD RED] OS-level execution failure ({os_failure_status}). "
+                "Forcing LLM target reassessment..."
+            )
+            current_context += (
+                f"\n[SYSTEM FEEDBACK]: The action passed security review but failed at the OS layer. "
+                f"Status: {os_failure_status}. Reason: {os_failure_reason}. "
+                "Select a different target or action, or return action 'unknown' if no safe target remains."
+            )
+            continue
+
         msg = f"Max self-correction iterations ({self.max_iterations}) reached. Engaging Shadow Net fallback."
         print(f"\n[YOMI-ROUTER]  {msg}")
         self.audit.record_action("ROUTER", "MAX_ITERATIONS_REACHED", msg)

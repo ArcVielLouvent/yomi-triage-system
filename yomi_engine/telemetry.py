@@ -60,7 +60,15 @@ class TelemetryEngine:
 
         # SANS Benchmarks for comparison
         human_soc_avg = 1200.0  # 20 minutes to triage
-        horizon3_ai = 60.0  # 60 seconds breakout
+        # [FIXED] see docs/known_issues.md #31: this used to be named/labeled
+        # after a specific competitor's trademarked product (Horizon3.ai's
+        # NodeZero(R)) and printed unverified "Defeated Horizon3 AI" /
+        # "TACTICAL WIN" claims -- Yomi has never actually been benchmarked
+        # head-to-head against that product; this only ever compared its own
+        # latency against a publicly-stated capability figure. Genericized
+        # to avoid an unsubstantiated comparative claim tied to a real,
+        # actively-marketed competitor's name.
+        autonomous_offensive_ai_benchmark_seconds = 60.0  # publicly-reported industry breakout-time figure
 
         # Mathematical Bound for Speed Multiplier
         # Prevents astronomically high multipliers (e.g., 120,000,000x) if latency is sub-millisecond
@@ -72,7 +80,7 @@ class TelemetryEngine:
             "action": action_taken,
             "latency_seconds": round(latency, 4),
             "human_speed_multiplier": f"{round(speed_multiplier, 1)}x",
-            "beat_horizon3_ai": latency < horizon3_ai,
+            "sub_60s_containment": latency < autonomous_offensive_ai_benchmark_seconds,
         }
 
         # Thread-Safe I/O Execution
@@ -102,10 +110,10 @@ class TelemetryEngine:
             f"SOC Comparison   : {report['human_speed_multiplier']} Faster than Human Analyst"
         )
 
-        if report["beat_horizon3_ai"]:
-            print("[✓] TACTICAL WIN : Defeated Horizon3 AI 60-second breakout time.")
+        if report["sub_60s_containment"]:
+            print("[✓] TACTICAL WIN : Sub-60s containment achieved.")
         else:
-            print("[!] TACTICAL LOSS: Failed to beat AI adversary breakout time.")
+            print("[!] TACTICAL LOSS: Containment exceeded the 60-second benchmark window.")
         print("=" * 60 + "\n")
 
 
