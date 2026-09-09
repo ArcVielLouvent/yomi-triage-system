@@ -16,7 +16,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
 from yomi_core.sentinel import SentinelDaemon
-from yomi_core.ghost import GhostProtocol
+from yomi_core.guardian import GuardianOrchestrator
 from yomi_data import validate_data_store, read_latest_ledger_entry
 
 try:
@@ -151,12 +151,29 @@ def install_persistence() -> None:
         )
         return
 
+    # [FIXED] setup.py has defined a "yomi-triage" console_script entry
+    # point (yomi_core.cli:main) since the beginning, but this function
+    # never used it -- ExecStart was always built from sys.executable +
+    # the raw cli.py path, even when the package was pip-installed and
+    # a clean global "yomi-triage" command was available on PATH. Prefer
+    # it when present (shorter, portable, survives the source checkout
+    # moving/being deleted); fall back to the direct interpreter
+    # invocation for anyone running straight from a git clone without
+    # `pip install .` first.
+    import shutil as _shutil
+
+    global_command = _shutil.which("yomi-triage")
+
     if os_name == "Linux":
         service_file = Path.cwd() / "yomi-triage.service"
 
-        # Configuration Newline Injection Shield
-        safe_exe = str(sys.executable).replace("\n", "").replace("\r", "")
-        safe_script = str(script_path).replace("\n", "").replace("\r", "")
+        if global_command:
+            exec_start = f"{shlex.quote(global_command)} --auto --headless"
+        else:
+            # Configuration Newline Injection Shield
+            safe_exe = str(sys.executable).replace("\n", "").replace("\r", "")
+            safe_script = str(script_path).replace("\n", "").replace("\r", "")
+            exec_start = f"{shlex.quote(safe_exe)} {shlex.quote(safe_script)} --auto --headless"
 
         service_payload = (
             f"[Unit]\n"
@@ -164,7 +181,7 @@ def install_persistence() -> None:
             f"After=network.target\n\n"
             f"[Service]\n"
             f"Type=simple\n"
-            f"ExecStart={shlex.quote(safe_exe)} {shlex.quote(safe_script)} --auto --headless\n"
+            f"ExecStart={exec_start}\n"
             f"Restart=always\n"
             f"RestartSec=3\n"
             f"User=root\n\n"
@@ -494,62 +511,19 @@ def main() -> None:
         audit = _prepare_runtime_environment()
         ledger_file_path = validate_data_store()["ledger_file"]
 
-        # Deploy Ghost Protocol
-        if os.environ.get("YOMI_ENABLE_GHOST_PROTOCOL", "false").lower() in (
-            "1",
-            "true",
-            "yes",
-        ):
-            try:
-                ghost = GhostProtocol()
-                ghost.engage_camouflage()
-
-                # Arm the Anti-Tamper Watchdog Circuit
-                ghost.arm_watchdog()
-                _record_audit_event(
-                    audit,
-                    "GHOST_PROTOCOL",
-                    "GhostProtocol engaged camouflage and armed watchdog.",
-                )
-            except Exception as exc:
-                # Atomic Rollback Safety Enforcement
-                # Immediately raise SystemExit to force shutdown if the watchdog cannot be armed.
-                # Prevents Yomi from maintaining an unmonitored cloaked state inside the kernel.
-                logger.critical(
-                    "Fatal: Ghost Protocol watchdog failed to arm: %s. Aborting startup.",
-                    exc,
-                )
-                _record_audit_event(
-                    audit,
-                    "GHOST_PROTOCOL_ATOMIC_ABORT",
-                    "GhostProtocol watchdog failed to arm. System aborted to prevent unmonitored cloaked state.",
-                    metadata={"error": str(exc)},
-                )
-                raise SystemExit(
-                    "Fatal: Ghost Protocol armed state is corrupt. Aborted."
-                )
-        else:
-            logger.info(
-                "GhostProtocol is disabled by default. Set YOMI_ENABLE_GHOST_PROTOCOL=true to enable it."
-            )
+        # [FIXED] known_issues.md #26: Ghost Protocol used to be gated by
+        # YOMI_ENABLE_GHOST_PROTOCOL here (never by module_registry's
+        # YOMI_MODULE_GHOST), and the eBPF Sensor below was NOT GATED AT
+        # ALL -- unconditionally spawned regardless of
+        # EBPF_SENSOR's default_enabled=False in the registry. Both now
+        # go through GuardianOrchestrator.bootstrap_startup_daemons,
+        # which consults module_registry exclusively, like every other
+        # module. See yomi_core/guardian.py for the atomic-abort
+        # behavior on Ghost Protocol watchdog failure (unchanged).
+        GuardianOrchestrator.bootstrap_startup_daemons(audit)
 
         # Deploy Sentinel Daemon
         sentinel_instance = _run_sentinel_daemon(audit)
-        try:
-            import subprocess
-
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    "from yomi_engine.ebpf_sensor import eBPFSentinel; s = eBPFSentinel(); s.arm_sensor(); s.monitor_pid(1, 86400)",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            logger.info("Ring-0 eBPF Sensor deployed in isolated vacuum.")
-        except Exception as e:
-            logger.error(f"Failed to deploy eBPF Sensor: {e}")
 
         try:
             if args.headless:

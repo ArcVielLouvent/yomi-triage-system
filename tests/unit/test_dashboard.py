@@ -155,7 +155,7 @@ def test_refresh_telemetry_parses_latest_valid_entry(dashboard, tmp_path, monkey
     tel_file = os.path.join(tel_path, "telemetry_benchmarks.jsonl")
 
     with open(tel_file, "w", encoding="utf-8") as f:
-        f.write(json.dumps({"latency_seconds": 2.5, "human_speed_multiplier": "120x", "beat_horizon3_ai": True}) + "\n")
+        f.write(json.dumps({"latency_seconds": 2.5, "human_speed_multiplier": "120x", "sub_60s_containment": True}) + "\n")
 
     dashboard._refresh_telemetry_metrics()
     assert dashboard.latest_ttc == "2.5s"
@@ -173,7 +173,7 @@ def test_refresh_telemetry_skips_malformed_trailing_lines(dashboard):
     tel_file = os.path.join(tel_path, "telemetry_benchmarks.jsonl")
 
     with open(tel_file, "w", encoding="utf-8") as f:
-        f.write(json.dumps({"latency_seconds": 1.0, "human_speed_multiplier": "10x", "beat_horizon3_ai": False}) + "\n")
+        f.write(json.dumps({"latency_seconds": 1.0, "human_speed_multiplier": "10x", "sub_60s_containment": False}) + "\n")
         f.write("{not valid json\n")
 
     dashboard._refresh_telemetry_metrics()

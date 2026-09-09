@@ -11,7 +11,7 @@
 > were cross-checked against the current codebase while writing
 > [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still hold true
 > as of Fase 5. For the automated, currently-passing test suite and its
-> real numbers, see [`docs/usage.md`](usage.md#3-performance--scalability-metrics)
+> real numbers, see [`docs/usage.md`](usage.md#5-performance--scalability-metrics)
 > and run `./run_tests.sh` yourself. For known gaps and their current
 > fix status (including the dossier-bias limitation described in
 > Section 3 below), see [`docs/known_issues.md`](known_issues.md).
@@ -74,6 +74,8 @@ To validate our claims regarding the immutable audit trail, below is an exact, u
   "action": "ESCALATED_TO_SHADOW_NET",
   "latency_seconds": 3.0025,
   "human_speed_multiplier": "399.7x Faster",
-  "beat_horizon3_ai": true
+  "sub_60s_containment": true
 }
 ```
+
+*(Field renamed from `beat_horizon3_ai` -- see [`docs/known_issues.md`](known_issues.md) #31 for why: it never reflected a real head-to-head benchmark against any specific competitor's product, only a comparison against a publicly-stated industry figure, so naming it after one company's trademarked product was both legally unnecessary and factually overclaiming.)*

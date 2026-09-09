@@ -4,6 +4,8 @@
 </div>
 
 > **Archive note:** This document preserves the original hackathon-facing framing and judging-criteria mapping from the SANS Institute *Find Evil!* "Protocol SIFT" Hackathon submission. Yomi did not place in the Top 5 finalists (Camel, FindEvil, Mulder, Protocol SIFT++, TRUDI). It is kept here for reference and provenance, separate from the current project documentation in [`../../README.md`](../../README.md) and the rest of `docs/`.
+>
+> **Naming note (added Fase 6, see [`docs/known_issues.md`](../known_issues.md) #31):** this archived document references Horizon3.ai's NodeZero® by name as a comparison point ("beat Horizon3 AI"). That framing was never based on an actual head-to-head benchmark against that product -- only a comparison against a publicly-stated industry figure -- and has been genericized in the current, active codebase and documentation. Preserved here verbatim for historical accuracy of what was actually submitted; not a claim this project stands behind going forward.
 
 ---
 

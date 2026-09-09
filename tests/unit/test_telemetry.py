@@ -43,7 +43,7 @@ def test_start_then_stop_returns_report_with_expected_shape(telemetry):
     assert report["action"] == "Cryogenic Freeze"
     assert report["latency_seconds"] > 0
     assert report["human_speed_multiplier"].endswith("x")
-    assert isinstance(report["beat_horizon3_ai"], bool)
+    assert isinstance(report["sub_60s_containment"], bool)
 
 
 def test_stop_timer_on_unknown_incident_returns_none(telemetry):
@@ -91,14 +91,14 @@ def test_speed_multiplier_is_bounded_for_sub_millisecond_latency(telemetry):
     assert multiplier <= 1_200_000.0
 
 
-def test_beat_horizon3_ai_flag_reflects_60_second_threshold(telemetry, monkeypatch):
+def test_sub_60s_containment_flag_reflects_60_second_threshold(telemetry, monkeypatch):
     # Directly exercise the boundary by manipulating perf_counter via the
     # active_incidents dict rather than actually sleeping 60+ seconds.
     telemetry.start_timer("INC-SLOW")
     with telemetry._dict_lock:
         telemetry.active_incidents["INC-SLOW"] = time.perf_counter() - 61.0
     report = telemetry.stop_timer("INC-SLOW", "slow action")
-    assert report["beat_horizon3_ai"] is False
+    assert report["sub_60s_containment"] is False
     assert report["latency_seconds"] >= 61.0
 
 
