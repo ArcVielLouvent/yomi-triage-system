@@ -1,0 +1,31 @@
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+# Deliberately scoped for Fase 1: catch bug-class errors across the WHOLE
+# repo immediately (undefined names, redefinitions, bare excepts, etc. --
+# these can crash production regardless of which branch touches that file).
+# Cosmetic/style rules (import sorting, f-string nits, non-pep585 typing,
+# implicit-optional) are deferred: they'll be enabled per-package as each
+# foundation/layerN-modules branch actually refactors that package, instead
+# of dumping one giant reformat commit on files nobody has test-covered yet.
+select = [
+    "F",     # pyflakes: undefined names, unused imports, redefinitions -- real bugs
+    "E9",    # syntax errors
+]
+ignore = [
+    "F401",  # unused-import -- noisy on files mid-refactor; revisit per-package
+    "F541",  # f-string without placeholders -- cosmetic, revisit per-package
+    "F841",  # unused local variable -- cosmetic, revisit per-package
+]
+# BACKLOG (intentionally not enabled repo-wide yet -- would fail CI today on
+# files outside Fase 1's scope): S110 (try/except/pass -- codebase uses this
+# deliberately as "best effort" in many places, e.g. cleanup/unmount/chmod
+# paths; needs per-instance review, not a blanket rule), E722 (bare except,
+# 1 instance in ebpf_sensor.py). Track in docs/known_issues.md; enable per
+# package as each foundation/layerN-modules branch actually touches it.
+
+[tool.ruff.lint.per-file-ignores]
+# Test files legitimately need dynamic sys.path manipulation before imports.
+"tests/**/*.py" = ["F401"]

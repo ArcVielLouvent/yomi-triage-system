@@ -268,7 +268,7 @@ class YomiDashboard:
                         with self._telemetry_lock:
                             self.latest_ttc = f"{latest.get('latency_seconds', 0)}s"
                             speed = latest.get("human_speed_multiplier", "")
-                            self.speed_multiplier = f"{speed} (Beat Horizon3: {latest.get('beat_horizon3_ai')})"
+                            self.speed_multiplier = f"{speed} (Sub-60s: {latest.get('sub_60s_containment')})"
                             self._last_tel_size = current_size
                         return
                     except json.JSONDecodeError:

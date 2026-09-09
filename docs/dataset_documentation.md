@@ -3,6 +3,17 @@
   <h2>Dataset & Reproducibility Documentation</h2>
 </div>
 
+> **Provenance note (added Fase 5):** the reproduction steps below
+> describe a manual, live demo session run on an actual SANS SIFT
+> Workstation -- not a script `run_tests.sh` executes. Every CLI entry
+> point referenced here (`swarm.py`, `hunter.py`, `mind_reader.py`,
+> `dossier.py`, the `harness.py`/`mcp_server.py` one-liners) was
+> cross-checked against the current codebase while writing
+> [`docs/phase_log/fase_5.md`](phase_log/fase_5.md) and still matches.
+> For automated, currently-passing coverage, run `./run_tests.sh`
+> yourself; see [`docs/known_issues.md`](known_issues.md) for anything
+> still open.
+
 ## 1. Overview & Dataset Strategy
 
 This document outlines the datasets, memory captures, and telemetry logs utilized to evaluate the **KuroTech Yomi** architecture. In alignment with the SANS Find Evil! Hackathon mandate, we utilized a combination of exact official case data and live deterministic OS artifacts.
@@ -22,7 +33,7 @@ To test the live-action components of Yomi (eBPF sensors and Autonomous Containm
 
 To ensure perfect deterministic evaluation, SANS Judges can replicate the exact sequence demonstrated in our submission video by running the following commands on a standard SANS SIFT Workstation (v2026).
 
-**Preparation:** Open two terminal windows side-by-side. Log into both as root (`sudo su -`) and navigate to the project directory: `cd /home/sansforensics/yomi-triage-system`. Ensure your Gemini API key is exported: `export GEMINI_API_KEY="YOUR_KEY"`.
+**Preparation:** Open two terminal windows side-by-side. Log into both as root (`sudo su -`) and navigate to the project directory: `cd /home/sansforensics/yomi-triage-system`. Ensure your Gemini API key is exported: `export YOMI_GEMINI_API_KEY="YOUR_KEY"`.
 
 ### Step 1: Initialize the EDR & eBPF Hooks
 
