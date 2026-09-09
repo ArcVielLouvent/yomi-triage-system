@@ -6,6 +6,14 @@
 > akhir fase. Urutan pengerjaan: modul dengan dependensi paling sedikit dan
 > risiko paling rendah duluan.
 
+> **Naming note (ditambahkan Fase 6, lihat [`docs/known_issues.md`](../known_issues.md) #31):**
+> baris "threshold 60 detik vs Horizon3 AI" di bawah ini adalah log historis
+> apa adanya dari progress saat itu. Field yang dimaksud (`beat_horizon3_ai`)
+> sudah di-genericize jadi `sub_60s_containment` di kode aktif — nggak
+> pernah ada benchmark head-to-head sungguhan lawan produk itu, cuma
+> perbandingan ke angka industri yang dipublikasikan. Dibiarkan verbatim di
+> sini demi akurasi historis log fase, bukan klaim yang masih dipegang.
+
 ## Cakupan modul
 
 11 modul Lapisan 1 (semuanya cuma bergantung ke Lapisan 0):
