@@ -15,6 +15,7 @@ from yomi_engine.hunter import OmniVectorHunter
 from yomi_core.router import YomiRouter
 from yomi_engine.telemetry import TelemetryEngine
 from yomi_engine.mitre_mapper import MitreMapper
+from yomi_core.guardian import GuardianOrchestrator
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Core Module - Infinite Sentinel Loop (v4.0)
@@ -29,6 +30,12 @@ class SentinelDaemon:
         self.hunter = OmniVectorHunter()
         self.router = YomiRouter()
         self.telemetry = TelemetryEngine()
+        # [FIXED] known_issues.md #11: closes the "5 of 13 modules wired"
+        # gap. GuardianOrchestrator reads yomi_core.module_registry and
+        # dispatches mind_reader/shadow_net/remediator/dossier/mirage/
+        # sandbox from this loop -- see yomi_core/guardian.py for the
+        # full dispatch design and its constraints.
+        self.guardian = GuardianOrchestrator()
 
         self.threat_level = "SAFE"  # SAFE, ESCALATED, CRITICAL
         self.is_running = False
@@ -114,6 +121,7 @@ class SentinelDaemon:
         # Mem-bypass LLM sepenuhnya jika ancaman bersifat CRITICAL.
         # ==============================================================================
         instant_freeze_applied = False
+        post_containment_dispatched = False
         if self.threat_level == "CRITICAL" and target_pid > 0:
             print(
                 f"[SENTINEL] [BLOOD RED] CRITICAL THREAT DETECTED. Executing immediate SIGSTOP on PID {target_pid}..."
@@ -135,6 +143,12 @@ class SentinelDaemon:
                     f"CRITICAL THREAT: Executed immediate SIGSTOP cryogenic freeze on PID {target_pid}.",
                     metadata={"target_pid": target_pid, "mitigation": "SIGSTOP"},
                 )
+
+                # target_pid is deterministically stopped at this point --
+                # safe to chain deep-dive modules (see guardian.py's
+                # module docstring, constraint #2).
+                self.guardian.handle_post_containment(target_pid)
+                post_containment_dispatched = True
 
                 self.telemetry.stop_timer(incident_id, "INSTANT_DETERMINISTIC_FREEZE")
             except OSError as e:
@@ -171,6 +185,23 @@ class SentinelDaemon:
             "[SENTINEL] Routing tactical MITRE context to OpenClaw LLM Gateway for Post-Mortem Analysis..."
         )
         triage_result = self.router.execute_autonomous_triage(forensic_context)
+
+        # [FIXED] known_issues.md #11: dispatch deep-dive modules based
+        # on the triage outcome. See guardian.py's module docstring for
+        # why ESCALATED_TO_SHADOW_NET (async) and a synchronous
+        # SUCCESS/FROZEN result are handled differently.
+        result_status = triage_result.get("status")
+        if result_status == "ESCALATED_TO_SHADOW_NET" and target_pid > 0:
+            self.guardian.handle_escalation(target_pid, triage_result.get("message", ""))
+        elif (
+            result_status == "SUCCESS"
+            and triage_result.get("action") == "FROZEN"
+            and target_pid > 0
+            and not post_containment_dispatched
+        ):
+            self.guardian.handle_post_containment(target_pid)
+
+        self.guardian.generate_incident_dossier()
 
         if not instant_freeze_applied:
             executed_action = triage_result.get("status", "UNKNOWN_ACTION")

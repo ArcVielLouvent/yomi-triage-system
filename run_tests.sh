@@ -3,11 +3,12 @@
 # run_tests.sh — one-command test runner for Codespaces / any dev machine.
 #
 # Usage:
-#   ./run_tests.sh              # full suite: lint + unit + benchmarks + coverage
+#   ./run_tests.sh              # full suite: lint + unit + integration + bench + smoke
 #   ./run_tests.sh lint         # lint only
 #   ./run_tests.sh unit         # unit tests only
 #   ./run_tests.sh bench        # benchmarks only
-#   ./run_tests.sh integration  # integration/crucible tests only (once they exist)
+#   ./run_tests.sh integration  # integration/crucible tests only
+#   ./run_tests.sh smoke        # scripts/smoke_test_cli.py only (real end-to-end chain, no pytest)
 #   ./run_tests.sh quick        # unit tests only, no coverage report (fastest loop)
 #
 # Exits non-zero on first failing stage, matching what branch-ci.yml /
@@ -87,6 +88,12 @@ run_bench() {
     ok "Benchmarks passed"
 }
 
+run_smoke() {
+    step "Smoke test (scripts/smoke_test_cli.py — real Sentinel+Guardian+Harness chain, no mocks past the LLM boundary)"
+    python3 scripts/smoke_test_cli.py || fail "Smoke test failed"
+    ok "Smoke test passed"
+}
+
 # --------------------------------------------------------------------------
 case "$MODE" in
     lint)        run_lint ;;
@@ -94,11 +101,13 @@ case "$MODE" in
     quick)       run_unit ;;
     bench)       run_bench ;;
     integration) run_integration ;;
+    smoke)       run_smoke ;;
     all)
         run_lint
         run_unit
         run_integration
         run_bench
+        run_smoke
         ;;
     *)
         echo "Unknown mode: $MODE"

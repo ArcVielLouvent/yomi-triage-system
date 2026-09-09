@@ -341,6 +341,10 @@ def test_execute_resurrection_success_spawns_monitoring_thread(sandbox, tmp_path
 # --------------------------------------------------------------------------
 
 def test_monitor_awakened_threat_full_sequence(sandbox, tmp_path, monkeypatch, isolated_stamp):
+    # MIRAGE requires SANDBOX and is disabled by default -- explicitly
+    # enable it for this test since it asserts mirage IS called.
+    monkeypatch.setenv("YOMI_MODULE_SANDBOX", "true")
+    monkeypatch.setenv("YOMI_MODULE_MIRAGE", "true")
     contained_path = tmp_path / "contained.bin"
     contained_path.write_bytes(b"x")
     contained_path.chmod(0o400)
@@ -386,6 +390,8 @@ def test_monitor_awakened_threat_full_sequence(sandbox, tmp_path, monkeypatch, i
 
 
 def test_monitor_awakened_threat_kills_process_on_timeout(sandbox, tmp_path, monkeypatch, isolated_stamp):
+    monkeypatch.setenv("YOMI_MODULE_SANDBOX", "true")
+    monkeypatch.setenv("YOMI_MODULE_MIRAGE", "true")
     contained_path = tmp_path / "contained.bin"
     contained_path.write_bytes(b"x")
 
@@ -415,3 +421,48 @@ def test_monitor_awakened_threat_kills_process_on_timeout(sandbox, tmp_path, mon
 
     assert killed["pgid"] == 55555
     assert fake_process.communicate.call_count == 2
+
+
+def test_monitor_awakened_threat_respects_disabled_mirage_and_mind_reader(
+    sandbox, tmp_path, monkeypatch, isolated_stamp
+):
+    """
+    [FIXED] known_issues.md #29: this method used to call MirageProtocol()
+    and MindReaderDecompiler() unconditionally, bypassing module_registry
+    entirely. With SANDBOX enabled but MIRAGE and MIND_READER left at
+    their real defaults (MIRAGE off, MIND_READER on... explicitly turned
+    off here to prove the gate works both ways), neither should be
+    touched when disabled.
+    """
+    monkeypatch.setenv("YOMI_MODULE_SANDBOX", "true")
+    monkeypatch.delenv("YOMI_MODULE_MIRAGE", raising=False)  # stays default OFF
+    monkeypatch.setenv("YOMI_MODULE_MIND_READER", "false")
+
+    contained_path = tmp_path / "contained.bin"
+    contained_path.write_bytes(b"x")
+
+    mirage_cls = MagicMock()
+    mind_reader_cls = MagicMock()
+    monkeypatch.setattr("yomi_engine.mirage.MirageProtocol", mirage_cls)
+    monkeypatch.setattr("yomi_engine.mind_reader.MindReaderDecompiler", mind_reader_cls)
+    monkeypatch.setattr(sandbox, "_cleanup_container_forceful", lambda info: None)
+
+    fake_process = MagicMock()
+    fake_process.communicate.return_value = (b"", b"")
+
+    sandbox._monitor_awakened_threat(
+        original_pid=1234,
+        sandbox_pid=55555,
+        contained_path=str(contained_path),
+        container_info={"mount_dir": "/fake"},
+        process=fake_process,
+    )
+
+    mirage_cls.assert_not_called()
+    mind_reader_cls.assert_not_called()
+
+    # Cleanup and the final ledger entry must still happen regardless.
+    with open(isolated_stamp.ledger_file, encoding="utf-8") as f:
+        import json
+        lines = [json.loads(l) for l in f if l.strip()]
+    assert lines[-1]["action_type"] == "CONTAINER_DESTROYED"
