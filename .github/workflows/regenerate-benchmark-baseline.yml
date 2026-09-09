@@ -1,0 +1,39 @@
+name: Regenerate benchmark baseline (manual)
+
+# Manual-only. Run this whenever the committed baseline in
+# tests/benchmarks/baseline_stamp_record_action.json needs to be
+# refreshed -- e.g. it was accidentally committed from a contributor's
+# local machine/Codespaces instead of an actual GitHub Actions runner
+# (which is what check_benchmark_regression.py is supposed to compare
+# against), or GitHub changes runner hardware and old numbers no longer
+# reflect current baseline hardware.
+#
+# Deliberately NOT run automatically on every push -- benchmark timing
+# has natural run-to-run noise, and auto-committing a new baseline on
+# every CI run would silently mask real regressions by constantly
+# resetting the comparison point to whatever the last run happened to
+# measure.
+#
+# Usage: trigger manually (GitHub UI: Actions tab -> this workflow ->
+# "Run workflow", or `gh workflow run regenerate-benchmark-baseline.yml`),
+# then download the "new-baseline" artifact from the run and commit its
+# contents to tests/benchmarks/baseline_stamp_record_action.json.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Regenerate baseline on this runner
+        run: python3 tests/benchmarks/test_bench_stamp.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: new-baseline
+          path: tests/benchmarks/baseline_stamp_record_action.json
