@@ -222,6 +222,20 @@ bagian Fase 7 Tahap 1.
    sebelum commit, tapi gap desainnya sendiri masih OPEN — nggak ada
    mekanisme test/CI yang nyambungin tactic ID yang diasumsikan
    correlator ke tactic ID yang beneran ada di MitreMapper).
+7. ✅ **Bonus: `known_issues.md` #7 FIXED** (di luar rencana kerja awal,
+   dikerjakan karena Arcia minta cek issue lama yang belum diperbaiki,
+   dan ini langsung nyambung ke `weaver.py`+`dossier.py` yang lagi
+   disentuh). Root cause: `mitre_mapper.py`'s `MAPPED` ledger entry
+   nggak pernah nyebut MITRE ID literal di `description`-nya, jadi
+   regex scan `weaver.py` nggak pernah nemu apa pun — bukan bug di
+   regex-nya, datanya emang nggak pernah ada. Fix: `mitre_mapper.py`
+   sekarang embed ID ke `description` DAN ke `metadata.mitre_ids`
+   terstruktur; `weaver.py` baca `metadata` langsung, bukan cuma
+   regex-atas-teks-bebas. Test lama yang nge-assert perilaku buggy
+   (`..._NOT_detected_..._KNOWN_BUG`) di-rename & di-flip jadi
+   `..._ARE_detected_...`, plus test baru buat backward-compat ledger
+   lama tanpa field `metadata`. Verified end-to-end lewat
+   `scripts/smoke_test_cli.py`.
 
 ## Belum diputuskan / perlu dibahas lagi
 
@@ -234,3 +248,33 @@ bagian Fase 7 Tahap 1.
 - Belum ada keputusan soal ground-truth validation dataset (NIST CFReDS/
   Digital Corpora/Ali Hadi) — itu Tahap 2 roadmap, di luar scope dokumen
   ini.
+
+## Sisa known_issues.md yang masih OPEN (per pengecekan Sesi ini)
+
+Dicek atas permintaan Arcia ("issue/bug lainnya yang dulu belum
+diperbaiki?"). #7 sudah diperbaiki di atas. Sisanya yang masih OPEN,
+dari `docs/known_issues.md`:
+
+- **#8** — `write_year_store()` nggak validasi shape saat nulis (yomi_data
+  layer, nggak nyambung ke Fase 7).
+- **#9** — `ImmutableStamp` singleton + hardcoded data dir, blokir
+  multi-tenant. Sengaja OPEN, keputusan arsitektur besar, di luar scope
+  fase mana pun sampai diputuskan eksplisit.
+- **#10** — `mcp_server.py` READ_VAULTS/WRITE_VAULTS hardcoded absolute
+  path list, isu portabilitas deployment.
+- **#16** — `mirage.py` teardown boundary check pakai `startswith()`,
+  bukan path containment asli (defense-in-depth, "not urgent").
+- **#24** — `cleanup_corrupt_backups` ngitung file, bukan incident
+  (nggak nyambung ke Fase 7).
+- **#27** — `pip install .` masukin `yomi_data/` kayak modul biasa
+  (worked around lewat instalasi/warning, root cause belum di-fix).
+- **#30** — asymmetric Mirage decoy lifecycle pas SANDBOX enabled.
+- **#33** — (baru, sesi ini) MitreMapper signature set nggak
+  divalidasi ke asumsi correlator.
+
+Nggak ada satupun dari sisa ini yang bersinggungan langsung sama kode
+yang disentuh Fase 7 Tahap 1 (`hunter.py`, `correlator.py`,
+`guardian.py`, `dossier.py`, `sentinel.py`, `mitre_mapper.py`,
+`weaver.py`) selain #7 yang udah dikerjain. Sisanya independen —
+perlu sesi/keputusan terpisah, bukan sesuatu yang "kebetulan" bisa
+ikut sekalian.

@@ -75,36 +75,41 @@ def test_newlines_in_description_are_visibly_marked_not_swallowed(weaver, isolat
 # KNOWN BUG regression test (see docs/known_issues.md #7)
 # --------------------------------------------------------------------------
 
-def test_mitre_mapper_entries_are_NOT_detected_by_weaver_KNOWN_BUG(weaver, isolated_stamp):
+def test_mitre_mapper_entries_ARE_detected_by_weaver(weaver, isolated_stamp):
     """
-    Root-cause regression test for the "Dossier Generation Bias" bug.
-
-    Writes a ledger entry in the EXACT shape mitre_mapper.py actually
-    produces (see yomi_engine/mitre_mapper.py line 131-135:
-    record_action("MITRE_MAPPER", "MAPPED", f"Mapped {n} unique tactics
-    across {m} anomalies.")) -- no literal MITRE ID like "T1055" ever
-    appears in that description string.
-
-    This test asserts the CURRENT (buggy) behavior: the narrative reports
-    "No explicit MITRE heuristics detected" even though real mapping
-    happened. If weaver.py is ever fixed (e.g. by having mitre_mapper.py
-    embed matched tactic IDs into the description, or by having weaver.py
-    read a structured field instead of regex-scanning free text), this
-    test should start failing and needs to be rewritten to assert the
-    fixed behavior instead.
+    Regression test for the fixed "Dossier Generation Bias" bug
+    (docs/known_issues.md #7). Writes a ledger entry in the EXACT shape
+    mitre_mapper.py now actually produces after the fix (see
+    yomi_engine/mitre_mapper.py's record_action call): a description
+    that DOES embed the literal MITRE IDs, plus a structured
+    `metadata.mitre_ids` list weaver.py reads directly rather than
+    relying on regex-scanning free text alone.
     """
     isolated_stamp.record_action(
         "MITRE_MAPPER",
         "MAPPED",
-        "Mapped 2 unique tactics across 5 anomalies.",
+        "Mapped 2 unique tactics across 5 anomalies: T1055, T1486.",
+        metadata={"mitre_ids": ["T1055", "T1486"]},
     )
     narrative = weaver.generate_narrative()
 
-    # The MITRE_MAPPER event IS in the narrative timeline...
     assert "MITRE_MAPPER" in narrative
     assert "MAPPED" in narrative
-    # ...but the dedicated MITRE mapping section below still claims nothing
-    # was found, because the regex never had a literal T1XXX to match.
+    mapping_section = narrative.split("[MITRE ATT&CK MAPPING CONFIRMED]")[1]
+    assert "T1055" in mapping_section
+    assert "T1486" in mapping_section
+    assert "No explicit MITRE heuristics detected" not in mapping_section
+
+
+def test_weaver_ignores_missing_or_malformed_metadata_field(weaver, isolated_stamp):
+    """
+    Backward compatibility: older ledger entries (written before this
+    fix) have no `metadata` field at all, and some entries elsewhere in
+    the codebase pass `metadata=None` explicitly -- neither should ever
+    raise, both should just contribute nothing to mitre_tactics.
+    """
+    isolated_stamp.record_action("HUNTER", "ROOT_CAUSE_FOUND", "No tactics here.")
+    narrative = weaver.generate_narrative()
     assert "No explicit MITRE heuristics detected in this sequence." in narrative
 
 
