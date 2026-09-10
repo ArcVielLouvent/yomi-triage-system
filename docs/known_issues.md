@@ -49,6 +49,31 @@ sessions or phases, and each entry says whether it's fixed yet.
    logic; scheduled for whichever phase touches `yomi_engine/weaver.py` +
    `dossier.py`.
 
+   Root cause (confirmed by reading both files together): `weaver.py`
+   only ever regex-scans each ledger entry's `description` string for a
+   literal `T1XXX`-shaped substring. `mitre_mapper.py`'s own `MAPPED`
+   ledger entry never contained one -- its description was always just
+   `f"Mapped {n} unique tactics across {m} anomalies."`, no IDs. The
+   MITRE_MAPPER event WAS visible in the narrative's timeline section
+   (agent name + action type render fine), but the dedicated "[MITRE
+   ATT&CK MAPPING CONFIRMED]" section below it always claimed nothing
+   was found, regardless of how much real mapping happened.
+
+   Status: **FIXED (Fase 7).** `mitre_mapper.py`'s `MAPPED` entry now
+   embeds the actual matched MITRE IDs directly in `description` (e.g.
+   `"Mapped 2 unique tactics across 5 anomalies: T1055, T1486."`) AND
+   in a structured `metadata.mitre_ids` list. `weaver.py` now reads
+   `metadata.mitre_ids` directly in addition to its existing regex scan
+   -- more robust than relying on prose always containing a literal
+   T-code, and it degrades safely (no crash) on older ledger entries
+   with no `metadata` field at all. Regression test renamed from
+   `test_mitre_mapper_entries_are_NOT_detected_by_weaver_KNOWN_BUG` to
+   `test_mitre_mapper_entries_ARE_detected_by_weaver` in
+   `tests/unit/test_weaver.py`, now asserting the fixed behavior;
+   `test_weaver_ignores_missing_or_malformed_metadata_field` added for
+   the backward-compatibility case. Verified end-to-end via
+   `scripts/smoke_test_cli.py`, not just the unit tests.
+
 8. **`write_year_store()` (yomi_data) performs no shape validation at write
    time.** An entry missing a matching `cve_id` field writes successfully
    with zero error, then silently vanishes (quarantined as corrupt) on the
@@ -587,6 +612,8 @@ sessions or phases, and each entry says whether it's fixed yet.
     both pass; `docs/demo_mode.md` and `docs/usage.md`'s quoted real
     ledger output (previously showing `/usr/bin/python3`) re-captured to
     show `/usr/bin/sleep`.
+
+## Fase 7 findings (cross-artifact correlation work)
 
 33. **`MitreMapper`'s signature set is small, hardcoded, and nothing
     validates that assumed tactic IDs actually exist in it.** While
