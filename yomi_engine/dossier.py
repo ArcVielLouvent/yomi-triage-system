@@ -102,13 +102,25 @@ class CourtReadyDossier:
         except Exception as e:
             return {"status": "ERROR", "mode": "FAILED", "reason": str(e)}
 
-    def generate_pdf_dossier(self):
+    def generate_pdf_dossier(self, correlated_case_file=None):
+        """
+        `correlated_case_file` (yomi_engine.correlator.CorrelatedCaseFile,
+        optional): Fase 7 addition. When provided, its report section is
+        appended AFTER Weaver's ledger-based narrative -- additive, not a
+        replacement. Both the TXT annex and the raw_hash embedded in the
+        PDF cover the combined text, so the correlation section is
+        integrity-protected the same way the rest of the dossier is.
+        """
         print(
             "\n[YOMI-DOSSIER]  Assembling Court-Ready Cryptographic Dossier..."
         )
 
         # Ingest the narrative from the Weaver
         narrative = self.weaver.generate_narrative()
+
+        if correlated_case_file is not None:
+            narrative = narrative + "\n\n" + correlated_case_file.to_report_text()
+
         timestamp = int(time.time())
 
         base_filename = os.path.join(self.report_dir, f"YOMI_DOSSIER_{timestamp}")

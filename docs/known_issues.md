@@ -587,3 +587,47 @@ sessions or phases, and each entry says whether it's fixed yet.
     both pass; `docs/demo_mode.md` and `docs/usage.md`'s quoted real
     ledger output (previously showing `/usr/bin/python3`) re-captured to
     show `/usr/bin/sleep`.
+
+33. **`MitreMapper`'s signature set is small, hardcoded, and nothing
+    validates that assumed tactic IDs actually exist in it.** While
+    building `correlator.py`'s cross-source corroboration logic (Fase 7),
+    a `_check_credential_access_corroboration` function was written
+    assuming a "credential access" MITRE tactic existed in
+    `mitre_mapper.py`'s signature dictionary. It doesn't -- the module
+    only has 5 fixed IoE signatures (`PE_INJECT`/T1055,
+    `YR_RANSOMWARE`/T1486, `PROC_BAD_DTB`/T1014, `PEB_MASQ`/T1036.004,
+    `C2_BEACON`/T1071), none with "credential" in their `tactical_desc`.
+    The function would have been silent dead code -- it checks
+    `mitre_tactics` entries that never contain the string it searches
+    for, so its `if not claims_cred_access: return` guard would always
+    fire and its actual logic would never run. Nothing (no import error,
+    no test failure, no lint warning) would have flagged this; it was
+    only caught by manually re-reading `mitre_mapper.py`'s signature
+    table before committing.
+
+    A related, real (not hypothetical) bug was caught the same way: the
+    first draft of `_check_c2_corroboration`'s network-finding match
+    (`external|c2` substring) false-positived against `swarm.py`'s own
+    CLEAN finding wording (`"...without obvious external C2
+    anomalies"`), which would have marked an uncorroborated MitreMapper
+    keyword hit as "corroborated" -- the exact failure mode the
+    correlator exists to prevent. Fixed by narrowing to the 4 specific
+    positive-signal phrases `swarm.py` emits when it actually flags
+    something; a regression test
+    (`test_t1071_is_a_contradiction_when_network_agent_finds_nothing`)
+    guards this specific case going forward.
+
+    Status: **FIXED for both specific instances** (dead credential-access
+    check replaced with a real T1055/Process-Injection check;
+    C2 corroboration regex narrowed + regression-tested). **OPEN as a
+    broader design gap**: nothing links "MITRE tactic IDs a correlation
+    check assumes exist" to "MITRE tactic IDs `MitreMapper` actually
+    defines" at test-collection or CI time -- a future correlator
+    corroboration check for a tactic ID that doesn't exist in
+    `mitre_mapper.py`'s signature table would silently no-op again,
+    the same way this one almost did. A real fix would have
+    `MitreMapper` expose its known tactic ID set (e.g. a
+    `KNOWN_MITRE_IDS` frozenset) that `correlator.py`'s own test suite
+    asserts every corroboration check's referenced `mitre_id` against,
+    turning this class of mistake into a test failure instead of a
+    silent no-op.

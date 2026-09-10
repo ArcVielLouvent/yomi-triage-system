@@ -100,6 +100,13 @@ class GuardianOrchestrator:
         self._dossier = None
         self._mirage = None
         self._sandbox = None
+        self._correlator = None
+
+        # Populated by finalize_correlation(), consumed by
+        # generate_incident_dossier(). See finalize_correlation()'s
+        # docstring for why this can't just be computed inside
+        # handle_post_containment() instead.
+        self._last_case_file = None
 
     def is_enabled(self, key: str) -> bool:
         return key in self._active
@@ -141,6 +148,12 @@ class GuardianOrchestrator:
             from yomi_engine.sandbox import SandboxEnvironment
             self._sandbox = SandboxEnvironment()
         return self._sandbox
+
+    def _get_correlator(self):
+        if self._correlator is None:
+            from yomi_engine.correlator import CrossArtifactCorrelator
+            self._correlator = CrossArtifactCorrelator()
+        return self._correlator
 
     # -- dispatch: escalation (async path) -------------------------------
 
@@ -241,13 +254,58 @@ class GuardianOrchestrator:
             metadata={"target_pid": target_pid, "error": str(exc)},
         )
 
+    # -- dispatch: cross-artifact correlation (Fase 7) --------------------
+
+    def finalize_correlation(
+        self,
+        target_pid: int,
+        hunt_result: Optional[dict] = None,
+        mapped_tactics: Optional[list] = None,
+        swarm_reports: Optional[list] = None,
+        registry_result: Optional[dict] = None,
+        mind_reader_result: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """
+        Deliberately NOT folded into handle_post_containment() above,
+        despite both being "post-containment dispatch": on the instant
+        CRITICAL SIGSTOP path, handle_post_containment() fires BEFORE
+        sentinel.py has computed hunt_result/mapped_tactics/swarm_reports
+        (those come from the router/triage step that only runs on the
+        non-instant path). Correlation needs data that doesn't exist yet
+        at that call site. sentinel.py calls this separately, once those
+        values are available, regardless of which containment path fired.
+
+        Stores the result on self._last_case_file for
+        generate_incident_dossier() to pick up -- correlation output is
+        additive to the dossier, not a replacement for anything Weaver
+        already produces.
+        """
+        if not self.is_enabled("CORRELATOR"):
+            return None
+        try:
+            case_file = self._get_correlator().correlate(
+                target_pid,
+                hunt_result=hunt_result,
+                mapped_tactics=mapped_tactics,
+                swarm_reports=swarm_reports,
+                registry_result=registry_result,
+                mind_reader_result=mind_reader_result,
+            )
+            self._last_case_file = case_file
+            return case_file.to_dict()
+        except Exception as exc:
+            self._log_dispatch_error("CORRELATOR", target_pid, exc)
+            return None
+
     # -- dispatch: end-of-incident reporting -----------------------------
 
     def generate_incident_dossier(self) -> Optional[dict]:
         if not self.is_enabled("DOSSIER"):
             return None
         try:
-            return self._get_dossier().generate_pdf_dossier()
+            return self._get_dossier().generate_pdf_dossier(
+                correlated_case_file=self._last_case_file
+            )
         except Exception as exc:
             print(f"[GUARDIAN] Dossier generation failed: {exc}")
             self.audit.record_action(

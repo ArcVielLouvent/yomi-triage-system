@@ -1,6 +1,6 @@
 # Fase 7 — Cross-Artifact Correlation Layer (Tahap 1: Desain)
 
-**Status:** Sedang berjalan (desain, belum ada kode) · **Branch:** belum dibuat
+**Status:** Sedang berjalan (Tahap 1 inti selesai, terverifikasi end-to-end) · **Branch:** `feature/cross-artifact-correlation`
 
 > Bagian dari roadmap [`docs/roadmap/dfir-depth.md`](../roadmap/dfir-depth.md)
 > ("Sedalam Palung Mariana"). Dijadwalkan setelah landing page KuroTech di
@@ -173,20 +173,55 @@ bagian Fase 7 Tahap 1.
 
 ## Rencana kerja bertahap
 
-1. **Registry hardening** (prasyarat) — parser + resolver + test, nol
-   dari sekarang.
-2. **`correlator.py` inti** — `CorrelatedCaseFile` dataclass, logika
-   `correlate()`, deteksi corroboration/kontradiksi.
-3. **Integrasi guardian.py + module_registry.py** — dispatch, lazy
-   accessor, entry registry baru.
-4. **Integrasi dossier.py** — terima `CorrelatedCaseFile` opsional,
-   render section baru di PDF/TXT.
-5. **Test** — unit test correlator pakai bentuk data **asli** dari
-   modul sumber (pola yang sama kayak Fase 4 crucible test, bukan
-   fixture karangan tangan), plus test parser+resolver registry baru.
-6. **`docs/known_issues.md` + `scripts/create_known_issues_fase7.sh`**
-   sesuai `PHASE_CHECKLIST.md` — begitu ada temuan bug/gap selama
-   kerjain di atas.
+1. ✅ **Registry hardening** (prasyarat) — `_resolve_registry_hive_path()`
+   (env var `YOMI_REGISTRY_HIVE_PATH`, tanpa fallback otomatis, sengaja)
+   + `_parse_reglookup_output()` (filter keyword persistence: Run/
+   RunOnce/Services/Winlogon Shell/AppInit_DLLs/IFEO) + method publik
+   `hunt_registry_persistence()`, semua di `hunter.py`.
+2. ✅ **`correlator.py` inti** — `CorrelatedCaseFile` dataclass +
+   `CrossArtifactCorrelator.correlate()`. Dua fungsi corroboration
+   diimplementasi: T1071 (C2) dicek silang ke temuan Swarm's network
+   agent, T1055 (Process Injection) dicek silang ke timeline Plaso.
+   **Bug ditemukan & diperbaiki selama development**: cek regex awal
+   buat T1071 (`external|c2`) ternyata ke-match di kalimat "bersih"
+   swarm.py sendiri ("...without obvious external C2 anomalies") —
+   diperbaiki jadi match 4 frasa spesifik yang cuma muncul saat swarm.py
+   beneran nemu sesuatu. Rencana awal ada `_check_credential_access_
+   corroboration` tapi ternyata **dead code** — nggak ada satu pun dari
+   5 IoE signature di `mitre_mapper.py` yang tactical_desc-nya
+   menyebut "credential" — diganti jadi cek T1055 yang beneran eksis.
+3. ✅ **Integrasi guardian.py + module_registry.py** — method baru
+   `finalize_correlation()`, **sengaja dipisah** dari
+   `handle_post_containment()`: pada jalur CRITICAL (instant SIGSTOP),
+   `handle_post_containment()` kepanggil SEBELUM `hunt_result`/
+   `mapped_tactics` selesai dihitung di `sentinel.py` — jadi data yang
+   dibutuhkan correlator belum eksis di titik itu. `finalize_correlation()`
+   dipanggil terpisah, setelah data itu tersedia, terlepas dari jalur
+   containment mana yang kepicu. Entry `CORRELATOR` ditambahkan ke
+   `module_registry.py` (READ_ONLY, default ON, requires HUNTER+
+   MITRE_MAPPER+SWARM, LIBRARY sengaja bukan hard dependency).
+4. ✅ **Integrasi dossier.py** — `generate_pdf_dossier()` terima
+   `correlated_case_file=None` opsional, section-nya di-append ke
+   narrative Weaver sebelum PDF/TXT ditulis & di-hash (backward
+   compatible, semua caller lama nggak perlu berubah).
+5. ✅ **Test** — `tests/unit/test_correlator.py` (baru, ~20 test,
+   termasuk regression guard buat bug T1071 di atas),
+   `tests/unit/test_hunter.py` (+14 test registry), `test_guardian.py`
+   (+5 test finalize_correlation/dossier wiring), `test_dossier.py`
+   (+2 test backward-compat & section append). Full suite 483→518 test,
+   dijalankan 3x berturut-turut, semua PASS. `ruff check .` bersih.
+   **Diverifikasi end-to-end lewat `scripts/smoke_test_cli.py`** (bukan
+   cuma unit test terisolasi) — urutan asli kelihatan di output:
+   Registry Persistence Hunt → REGISTRY_HUNT_SKIPPED → CASE_FILE_COMPILED
+   by CORRELATOR, tersambung ke rantai Sentinel→Guardian→Harness nyata.
+6. ✅ **`docs/known_issues.md` + `scripts/create_known_issues_fase7.sh`**
+   sesuai `PHASE_CHECKLIST.md`. Entri #33: MitreMapper's signature set
+   nggak divalidasi terhadap asumsi tactic ID yang dipakai correlator's
+   corroboration checks (dead-code credential-access function + regex
+   T1071 yang ke-false-positive, keduanya ditemukan & diperbaiki
+   sebelum commit, tapi gap desainnya sendiri masih OPEN — nggak ada
+   mekanisme test/CI yang nyambungin tactic ID yang diasumsikan
+   correlator ke tactic ID yang beneran ada di MitreMapper).
 
 ## Belum diputuskan / perlu dibahas lagi
 
