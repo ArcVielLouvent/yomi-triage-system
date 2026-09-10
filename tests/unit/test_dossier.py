@@ -151,6 +151,32 @@ def test_sign_artifact_nonexistent_file_returns_error_not_crash(dossier):
 
 
 # --------------------------------------------------------------------------
+# correlated_case_file (Fase 7): additive, not a replacement for Weaver
+# --------------------------------------------------------------------------
+
+def test_generate_dossier_without_case_file_is_backward_compatible(dossier):
+    dossier.generate_pdf_dossier()  # no correlated_case_file arg at all
+
+    txt_file = next(Path(dossier.report_dir).glob("*.txt"))
+    assert "CROSS-ARTIFACT CORRELATION" not in txt_file.read_text(encoding="utf-8")
+
+
+def test_generate_dossier_appends_case_file_section_to_txt_annex(dossier, isolated_stamp):
+    from yomi_engine.correlator import CorrelatedCaseFile
+
+    isolated_stamp.record_action("HUNTER", "ROOT_CAUSE_FOUND", "Base narrative marker AAA111.")
+    case_file = CorrelatedCaseFile(target_pid=9999, incident_id="CORRELATED_PID_9999_1")
+
+    dossier.generate_pdf_dossier(correlated_case_file=case_file)
+
+    txt_file = next(Path(dossier.report_dir).glob("*.txt"))
+    content = txt_file.read_text(encoding="utf-8")
+    assert "AAA111" in content  # Weaver's narrative still present
+    assert "CROSS-ARTIFACT CORRELATION" in content  # additive section present
+    assert "9999" in content
+
+
+# --------------------------------------------------------------------------
 # PDF-specific: non-Latin-1 characters must not crash FPDF generation
 # --------------------------------------------------------------------------
 

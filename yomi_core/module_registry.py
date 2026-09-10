@@ -71,6 +71,14 @@ REGISTRY: dict[str, ModuleSpec] = {
     # Reporting — safe, on by default.
     "WEAVER": ModuleSpec("WEAVER", "yomi_engine.weaver", RiskTier.READ_ONLY, True),
     "DOSSIER": ModuleSpec("DOSSIER", "yomi_engine.dossier", RiskTier.READ_ONLY, True, requires=("WEAVER",)),
+    # Fase 7: synthesizes Hunter/MitreMapper/Swarm output into one
+    # CorrelatedCaseFile, additive to (not a replacement for) Weaver's
+    # ledger-based narrative. LIBRARY deliberately NOT a hard dependency --
+    # correlator runs fine without it, cve_correlations is just empty.
+    "CORRELATOR": ModuleSpec(
+        "CORRELATOR", "yomi_engine.correlator", RiskTier.READ_ONLY, True,
+        requires=("HUNTER", "MITRE_MAPPER", "SWARM"),
+    ),
 
     # --- Invasive tier: OFF by default, toggled explicitly (e.g. for demos) ---
     "SHADOW_NET": ModuleSpec(

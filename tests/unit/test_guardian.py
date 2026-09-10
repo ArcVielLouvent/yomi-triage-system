@@ -24,7 +24,7 @@ def clean_module_env(monkeypatch):
     the real shell environment leak into these tests."""
     for key in (
         "SHADOW_NET", "SANDBOX", "MIRAGE", "GHOST", "EBPF_SENSOR",
-        "MIND_READER", "REMEDIATOR", "DOSSIER",
+        "MIND_READER", "REMEDIATOR", "DOSSIER", "CORRELATOR",
     ):
         monkeypatch.delenv(f"YOMI_MODULE_{key}", raising=False)
     monkeypatch.delenv("YOMI_DEMO_PROFILE", raising=False)
@@ -286,6 +286,72 @@ def test_mirage_enabled_without_sandbox_dependency_fails_loud_at_construction(is
 
 
 # --------------------------------------------------------------------------
+# finalize_correlation (Fase 7)
+# --------------------------------------------------------------------------
+
+def test_finalize_correlation_calls_correlator_when_enabled(guardian, monkeypatch):
+    from yomi_engine.correlator import CorrelatedCaseFile
+
+    fake_case = CorrelatedCaseFile(target_pid=1234, incident_id="CORRELATED_PID_1234_1")
+    mock_instance = MagicMock()
+    mock_instance.correlate.return_value = fake_case
+    monkeypatch.setattr(
+        "yomi_engine.correlator.CrossArtifactCorrelator",
+        MagicMock(return_value=mock_instance),
+    )
+
+    result = guardian.finalize_correlation(
+        1234,
+        hunt_result={"temporal_vector": "x"},
+        mapped_tactics=[],
+        swarm_reports=[],
+        registry_result={},
+        mind_reader_result=None,
+    )
+
+    mock_instance.correlate.assert_called_once_with(
+        1234,
+        hunt_result={"temporal_vector": "x"},
+        mapped_tactics=[],
+        swarm_reports=[],
+        registry_result={},
+        mind_reader_result=None,
+    )
+    assert result == fake_case.to_dict()
+    assert guardian._last_case_file is fake_case
+
+
+def test_finalize_correlation_returns_none_when_disabled(monkeypatch, isolated_stamp):
+    monkeypatch.setenv("YOMI_MODULE_CORRELATOR", "false")
+    from yomi_core.guardian import GuardianOrchestrator
+    guardian = GuardianOrchestrator()
+
+    mock_cls = MagicMock()
+    monkeypatch.setattr("yomi_engine.correlator.CrossArtifactCorrelator", mock_cls)
+
+    result = guardian.finalize_correlation(1234)
+
+    assert result is None
+    assert guardian._last_case_file is None
+    mock_cls.assert_not_called()
+
+
+def test_finalize_correlation_exception_caught_and_logged(guardian, monkeypatch, isolated_stamp):
+    monkeypatch.setattr(
+        "yomi_engine.correlator.CrossArtifactCorrelator",
+        MagicMock(return_value=MagicMock(
+            correlate=MagicMock(side_effect=RuntimeError("boom"))
+        )),
+    )
+
+    result = guardian.finalize_correlation(1234)
+
+    assert result is None
+    assert guardian._last_case_file is None
+    assert "CORRELATOR_DISPATCH_ERROR" in _ledger_action_types(isolated_stamp)
+
+
+# --------------------------------------------------------------------------
 # generate_incident_dossier
 # --------------------------------------------------------------------------
 
@@ -299,8 +365,28 @@ def test_generate_incident_dossier_calls_dossier_when_enabled(guardian, monkeypa
 
     result = guardian.generate_incident_dossier()
 
-    mock_instance.generate_pdf_dossier.assert_called_once()
+    mock_instance.generate_pdf_dossier.assert_called_once_with(correlated_case_file=None)
     assert result == {"pdf_file": "x.pdf"}
+
+
+def test_generate_incident_dossier_passes_correlated_case_file_when_available(guardian, monkeypatch):
+    from yomi_engine.correlator import CorrelatedCaseFile
+
+    fake_case = CorrelatedCaseFile(target_pid=1234, incident_id="CORRELATED_PID_1234_1")
+    monkeypatch.setattr(
+        "yomi_engine.correlator.CrossArtifactCorrelator",
+        MagicMock(return_value=MagicMock(correlate=MagicMock(return_value=fake_case))),
+    )
+    mock_dossier = MagicMock()
+    monkeypatch.setattr(
+        "yomi_engine.dossier.CourtReadyDossier",
+        MagicMock(return_value=mock_dossier),
+    )
+
+    guardian.finalize_correlation(1234)
+    guardian.generate_incident_dossier()
+
+    mock_dossier.generate_pdf_dossier.assert_called_once_with(correlated_case_file=fake_case)
 
 
 def test_generate_incident_dossier_returns_none_when_disabled(monkeypatch, isolated_stamp):
