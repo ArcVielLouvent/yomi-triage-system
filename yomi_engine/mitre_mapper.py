@@ -128,10 +128,13 @@ class MitreMapper:
         print(
             f"[YOMI-MAPPER] Tactical mapping complete. {total_unique_tactics} unique MITRE signatures identified."
         )
+        sorted_ids = sorted(unique_mitre_ids)
         self.audit.record_action(
             "MITRE_MAPPER",
             "MAPPED",
-            f"Mapped {total_unique_tactics} unique tactics across {len(anomalies)} anomalies.",
+            f"Mapped {total_unique_tactics} unique tactics across {len(anomalies)} "
+            f"anomalies: {', '.join(sorted_ids) if sorted_ids else 'none'}.",
+            metadata={"mitre_ids": sorted_ids},
         )
 
         return mapped_results

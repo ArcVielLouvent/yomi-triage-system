@@ -108,11 +108,21 @@ class SentinelDaemon:
             indent=2,
         )
 
-    def _zero_prompt_trigger(self, anomaly_data: list):
+    def _zero_prompt_trigger(self, anomaly_data: list, swarm_reports: list | None = None):
+        """
+        `swarm_reports` (optional): the "reports" list from
+        self.swarm.deploy_swarm(), threaded through from start()'s loop
+        so Fase 7's correlator can cross-check MITRE tactic claims
+        against Swarm's actual network/memory findings for this same
+        incident, instead of re-running deploy_swarm() a second time
+        here. Defaults to None (treated as empty) for direct/manual
+        callers and existing tests that don't pass it.
+        """
         print("\n[SENTINEL]  Anomaly verified! Engaging Zero-Prompt Engine...")
 
         target_pid = self._extract_pid_from_anomaly(anomaly_data)
         incident_id = f"INCIDENT_PID_{target_pid}_{int(time.time())}"
+        post_containment_summary: dict | None = None
 
         self.telemetry.start_timer(incident_id)
 
@@ -147,7 +157,7 @@ class SentinelDaemon:
                 # target_pid is deterministically stopped at this point --
                 # safe to chain deep-dive modules (see guardian.py's
                 # module docstring, constraint #2).
-                self.guardian.handle_post_containment(target_pid)
+                post_containment_summary = self.guardian.handle_post_containment(target_pid)
                 post_containment_dispatched = True
 
                 self.telemetry.stop_timer(incident_id, "INSTANT_DETERMINISTIC_FREEZE")
@@ -166,8 +176,10 @@ class SentinelDaemon:
         # FASE 2: DEEP HUNT & AI POST-MORTEM (Non-Time-Critical)
         # ==============================================================================
         hunt_result = {"status": "SKIPPED", "conclusion": "No target PID available."}
+        registry_result: dict = {}
         if target_pid > 0:
             hunt_result = self.hunter.hunt_root_cause(target_pid)
+            registry_result = self.hunter.hunt_registry_persistence()
 
         mapper = MitreMapper()
         mapped_tactics = mapper.map_anomalies(anomaly_data)
@@ -199,7 +211,22 @@ class SentinelDaemon:
             and target_pid > 0
             and not post_containment_dispatched
         ):
-            self.guardian.handle_post_containment(target_pid)
+            post_containment_summary = self.guardian.handle_post_containment(target_pid)
+
+        if target_pid > 0:
+            mind_reader_result = (
+                post_containment_summary.get("mind_reader")
+                if post_containment_summary
+                else None
+            )
+            self.guardian.finalize_correlation(
+                target_pid,
+                hunt_result=hunt_result,
+                mapped_tactics=mapped_tactics,
+                swarm_reports=swarm_reports,
+                registry_result=registry_result,
+                mind_reader_result=mind_reader_result,
+            )
 
         self.guardian.generate_incident_dossier()
 
@@ -249,7 +276,7 @@ class SentinelDaemon:
                             print(
                                 "[SENTINEL] [BLOOD RED] Critical threat posture engaged."
                             )
-                        self._zero_prompt_trigger(anomalies)
+                        self._zero_prompt_trigger(anomalies, swarm_results.get("reports", []))
                     elif self.threat_level == "SAFE":
                         print(
                             "[SENTINEL]  No anomalies detected. Maintaining baseline patrol."

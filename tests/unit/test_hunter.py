@@ -217,3 +217,101 @@ def test_hunt_uses_real_plaso_result_when_tool_mocked_available(hunter, tmp_path
     result = hunter.hunt_root_cause(5678)
     assert "Shell execution" in result["temporal_vector"]
     assert "No deleted or hidden droppers" in result["spatial_vector"]
+
+
+# --------------------------------------------------------------------------
+# _resolve_registry_hive_path (Fase 7 prerequisite)
+# --------------------------------------------------------------------------
+
+def test_resolve_registry_hive_path_uses_env_var_when_set_and_exists(hunter, tmp_path, monkeypatch):
+    hive = tmp_path / "SYSTEM"
+    hive.write_bytes(b"fake hive bytes")
+    monkeypatch.setenv("YOMI_REGISTRY_HIVE_PATH", str(hive))
+    assert hunter._resolve_registry_hive_path() == str(hive)
+
+
+def test_resolve_registry_hive_path_no_env_var_returns_none(hunter, monkeypatch):
+    monkeypatch.delenv("YOMI_REGISTRY_HIVE_PATH", raising=False)
+    assert hunter._resolve_registry_hive_path() is None
+
+
+def test_resolve_registry_hive_path_nonexistent_path_returns_none(hunter, monkeypatch):
+    monkeypatch.setenv("YOMI_REGISTRY_HIVE_PATH", "/nonexistent/hive/xyz123")
+    assert hunter._resolve_registry_hive_path() is None
+
+
+# --------------------------------------------------------------------------
+# _parse_reglookup_output (Fase 7 prerequisite)
+# --------------------------------------------------------------------------
+
+def test_parse_reglookup_empty_output_returns_message(hunter):
+    assert "empty or unavailable" in hunter._parse_reglookup_output("")
+
+
+def test_parse_reglookup_finds_run_key_persistence(hunter):
+    output = r"\Microsoft\Windows\CurrentVersion\Run,evil.exe,REG_SZ,C:\temp\evil.exe"
+    result = hunter._parse_reglookup_output(output)
+    assert "Registry persistence artifacts detected" in result
+
+
+def test_parse_reglookup_no_match_returns_clean_message(hunter):
+    output = r"\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders,Desktop,REG_SZ,C:\Users\bob\Desktop"
+    result = hunter._parse_reglookup_output(output)
+    assert "No known persistence-related registry keys found" in result
+
+
+def test_parse_reglookup_deduplicates_and_caps_at_5(hunter):
+    output = "\n".join(
+        [rf"\Run\entry{i},cmd.exe,REG_SZ,payload{i}.exe" for i in range(8)]
+    )
+    result = hunter._parse_reglookup_output(output)
+    assert result.count("cmd.exe") <= 5
+
+
+# --------------------------------------------------------------------------
+# hunt_registry_persistence: full orchestration
+# --------------------------------------------------------------------------
+
+def test_hunt_registry_persistence_skipped_without_hive_path(hunter, monkeypatch):
+    monkeypatch.delenv("YOMI_REGISTRY_HIVE_PATH", raising=False)
+    result = hunter.hunt_registry_persistence()
+    assert result["status"] == "SKIPPED"
+    assert result["registry_vector"] is None
+
+
+def test_hunt_registry_persistence_skipped_seals_to_ledger(hunter, isolated_stamp, monkeypatch):
+    monkeypatch.delenv("YOMI_REGISTRY_HIVE_PATH", raising=False)
+    hunter.hunt_registry_persistence()
+
+    with open(isolated_stamp.ledger_file, encoding="utf-8") as f:
+        import json
+        lines = [json.loads(l) for l in f if l.strip()]
+    assert lines[-1]["action_type"] == "REGISTRY_HUNT_SKIPPED"
+
+
+def test_hunt_registry_persistence_uses_real_reglookup_result_when_available(hunter, tmp_path, monkeypatch):
+    hive = tmp_path / "SYSTEM"
+    hive.write_bytes(b"fake hive bytes")
+    monkeypatch.setenv("YOMI_REGISTRY_HIVE_PATH", str(hive))
+    monkeypatch.setattr(
+        hunter.arsenal, "run_reglookup",
+        lambda path: {"status": "SUCCESS", "output": r"\Run\evil,evil.exe,REG_SZ,evil.exe"},
+    )
+
+    result = hunter.hunt_registry_persistence()
+    assert result["status"] == "HUNT_COMPLETE"
+    assert "Registry persistence artifacts detected" in result["registry_vector"]
+
+
+def test_hunt_registry_persistence_tool_failure_reports_error(hunter, tmp_path, monkeypatch):
+    hive = tmp_path / "SYSTEM"
+    hive.write_bytes(b"fake hive bytes")
+    monkeypatch.setenv("YOMI_REGISTRY_HIVE_PATH", str(hive))
+    monkeypatch.setattr(
+        hunter.arsenal, "run_reglookup",
+        lambda path: {"status": "ERROR", "error": "reglookup not installed"},
+    )
+
+    result = hunter.hunt_registry_persistence()
+    assert result["status"] == "HUNT_COMPLETE"
+    assert "Registry analysis failed" in result["registry_vector"]

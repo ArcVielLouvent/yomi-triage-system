@@ -137,6 +137,110 @@ class OmniVectorHunter:
             )
         return "No deleted or hidden droppers found in TSK spatial output."
 
+    def _resolve_registry_hive_path(self) -> str | None:
+        """
+        Registry hives (SYSTEM, SOFTWARE, NTUSER.DAT) are not part of a
+        live Linux SIFT host's own filesystem the way a forensic source
+        root is -- they're artifacts already carved out of the disk image
+        under examination. Unlike _resolve_forensic_source(), there is
+        deliberately NO automatic fallback here: guessing a path would
+        silently analyze the wrong (or no) hive. Operators must point at
+        one explicitly.
+        """
+        env_path = os.environ.get("YOMI_REGISTRY_HIVE_PATH")
+        if env_path and os.path.exists(env_path):
+            return env_path
+        return None
+
+    def _parse_reglookup_output(self, output: str) -> str:
+        """
+        reglookup emits a flat CSV-like dump of every key/value in the
+        hive -- far too much to hand an LLM directly. Filters down to
+        keys historically associated with persistence mechanisms (Run/
+        RunOnce autostart, service creation, Winlogon shell hijack,
+        AppInit_DLLs injection, IFEO debugger hijack), the same
+        keyword-narrowing philosophy as _parse_tsk_output's deleted-file
+        filter above.
+        """
+        if not output:
+            return "Registry output was empty or unavailable."
+
+        persistence_pattern = re.compile(
+            r"(?:\\Run\b|\\RunOnce\b|\\Services\\|Winlogon\\Shell|"
+            r"AppInit_DLLs|Image File Execution Options|"
+            r"ShellServiceObjectDelayLoad)",
+            flags=re.IGNORECASE,
+        )
+
+        def memory_safe_line_generator(text):
+            start = 0
+            while True:
+                end = text.find("\n", start)
+                if end == -1:
+                    yield text[start:]
+                    break
+                yield text[start:end]
+                start = end + 1
+
+        persistence_hits = []
+        for line in memory_safe_line_generator(output):
+            normalized = line.strip()
+            if not normalized:
+                continue
+            if persistence_pattern.search(normalized):
+                persistence_hits.append(normalized[:500])
+
+        if not persistence_hits:
+            return "No known persistence-related registry keys found."
+
+        unique_hits = sorted(set(persistence_hits), key=str.lower)[:5]
+        return (
+            f"Registry persistence artifacts detected "
+            f"({len(persistence_hits)} total, showing up to 5): "
+            + " | ".join(unique_hits)
+        )
+
+    def hunt_registry_persistence(self) -> dict:
+        """
+        Separate from hunt_root_cause() deliberately: registry findings
+        aren't scoped to a single target PID the way Plaso/TSK timeline
+        correlation is (a Run key doesn't carry a PID), and a hive isn't
+        always available (live Linux host with no carved Windows hive
+        yet). SKIPPED is an expected, common outcome here, not an error.
+        """
+        print("[*] Initiating Registry Persistence Hunt...")
+
+        hive_path = self._resolve_registry_hive_path()
+        if not hive_path:
+            msg = (
+                "No registry hive path configured (set "
+                "YOMI_REGISTRY_HIVE_PATH to a carved SYSTEM/SOFTWARE/"
+                "NTUSER.DAT hive file). Registry hunt skipped -- expected "
+                "on a live Linux SIFT host with no extracted Windows hive "
+                "available yet."
+            )
+            self.audit.record_action("HUNTER", "REGISTRY_HUNT_SKIPPED", msg)
+            return {"status": "SKIPPED", "message": msg, "registry_vector": None}
+
+        reg_result = self.arsenal.run_reglookup(hive_path)
+        registry_clue = self._parse_reglookup_output(reg_result.get("output", ""))
+        if reg_result.get("status") != "SUCCESS":
+            registry_clue = (
+                f"Registry analysis failed: {reg_result.get('error', 'unknown error')}"
+            )
+
+        self.audit.record_action(
+            "HUNTER",
+            "REGISTRY_HUNT_COMPLETE",
+            f"Registry persistence hunt completed against {hive_path}.",
+            metadata={"hive_path": hive_path},
+        )
+        return {
+            "status": "HUNT_COMPLETE",
+            "hive_path": hive_path,
+            "registry_vector": registry_clue,
+        }
+
     def hunt_root_cause(self, target_pid: int) -> dict:
         print(f"[*] Initiating Root-Cause Hunt for PID {target_pid}...")
 

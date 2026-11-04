@@ -119,6 +119,22 @@ class TemporalNarrativeWeaver:
             found_mitre = self.mitre_regex.findall(desc)
             mitre_tactics.update(found_mitre)
 
+            # MitreMapper's own MAPPED log entry embeds structured IDs in
+            # `metadata.mitre_ids` (fixed here alongside this file --
+            # previously its `description` never contained a literal
+            # T-code at all, so the regex scan above could never find it;
+            # see docs/known_issues.md #7). Checking metadata directly is
+            # more robust than relying on prose always containing a
+            # literal T-code, and doesn't depend on any particular
+            # phrasing in `description`.
+            metadata = log.get("metadata")
+            if isinstance(metadata, dict):
+                meta_ids = metadata.get("mitre_ids")
+                if isinstance(meta_ids, list):
+                    mitre_tactics.update(
+                        str(mid) for mid in meta_ids if isinstance(mid, str)
+                    )
+
             report += f"  {counter}. [{timestamp}] {agent} executed '{action}'\n"
             report += f"     -> Details: {desc}\n"
             report += f"     -> Integrity Hash: {h_ash}...\n\n"
