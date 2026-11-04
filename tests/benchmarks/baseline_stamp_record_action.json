@@ -1,9 +1,9 @@
 {
   "operation": "ImmutableStamp.record_action",
   "n_entries": 200,
-  "mean_seconds": 0.004730678104998418,
-  "median_seconds": 0.0043742009999903075,
-  "p95_seconds": 0.009160026000017751,
-  "max_seconds": 0.01347701299999926,
-  "ops_per_second": 211.3861856175341
+  "mean_seconds": 0.004462627330000615,
+  "median_seconds": 0.004510798500000135,
+  "p95_seconds": 0.007077885000001061,
+  "max_seconds": 0.012264134999995235,
+  "ops_per_second": 224.0832420124721
 }
