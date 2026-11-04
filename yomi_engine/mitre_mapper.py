@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 import json
@@ -18,49 +19,68 @@ from yomi_audit.stamp import ImmutableStamp
 # ==============================================================================
 
 
+# The exact IoE Dictionary from the KuroTech Whitepaper. Module-level so the
+# set of tactic IDs this mapper can emit is importable (and testable)
+# without instantiating MitreMapper, which would create an ImmutableStamp.
+RAW_SIGNATURES = {
+    "PE_INJECT": {
+        "mitre_id": "T1055",
+        "desc": "Process Injection (VAD manipulation)",
+        "keywords": ["inject", "unbacked", "vad", "shellcode"],
+    },
+    "YR_RANSOMWARE": {
+        "mitre_id": "T1486",
+        "desc": "Data Encrypted for Impact",
+        "keywords": ["ransom", "high-entropy", "mass file io", "encrypt"],
+    },
+    "PROC_BAD_DTB": {
+        "mitre_id": "T1014",
+        "desc": "Rootkit (Direct Kernel Object Manipulation)",
+        "keywords": ["dkom", "bad dtb", "directorytablebase", "hidden"],
+    },
+    "PEB_MASQ": {
+        "mitre_id": "T1036.004",
+        "desc": "Masquerading: Task or Service",
+        "keywords": ["peb", "masquerad", "fake name", "svchost"],
+    },
+    "UM_APC": {
+        "mitre_id": "T1055.004",
+        "desc": "Process Injection: Asynchronous Procedure Call",
+        "keywords": ["apc", "user-mode hook"],
+    },
+    "C2_BEACON": {
+        "mitre_id": "T1071",
+        "desc": "Application Layer Protocol (C2)",
+        "keywords": [
+            "beacon",
+            "outbound",
+            "established",
+            "command-and-control",
+            "connection",
+        ],
+    },
+}
+
+# Emitted for anomalies that match no signature (see map_anomalies).
+GENERIC_ANOMALY_MITRE_ID = "T1106"
+
+# Every MITRE ID MitreMapper can emit. Known issue #33: consumers that
+# assume a tactic exists (e.g. correlator.py's corroboration checks) are
+# asserted against this set in the test suite, so referencing an ID the
+# mapper never produces fails a test instead of silently becoming dead code.
+KNOWN_MITRE_IDS = frozenset(
+    {data["mitre_id"] for data in RAW_SIGNATURES.values()}
+    | {GENERIC_ANOMALY_MITRE_ID}
+)
+
+
 class MitreMapper:
+    KNOWN_MITRE_IDS = KNOWN_MITRE_IDS
+
     def __init__(self):
         self.audit = ImmutableStamp()
 
-        # The exact IoE Dictionary from the KuroTech Whitepaper
-        self.raw_signatures = {
-            "PE_INJECT": {
-                "mitre_id": "T1055",
-                "desc": "Process Injection (VAD manipulation)",
-                "keywords": ["inject", "unbacked", "vad", "shellcode"],
-            },
-            "YR_RANSOMWARE": {
-                "mitre_id": "T1486",
-                "desc": "Data Encrypted for Impact",
-                "keywords": ["ransom", "high-entropy", "mass file io", "encrypt"],
-            },
-            "PROC_BAD_DTB": {
-                "mitre_id": "T1014",
-                "desc": "Rootkit (Direct Kernel Object Manipulation)",
-                "keywords": ["dkom", "bad dtb", "directorytablebase", "hidden"],
-            },
-            "PEB_MASQ": {
-                "mitre_id": "T1036.004",
-                "desc": "Masquerading: Task or Service",
-                "keywords": ["peb", "masquerad", "fake name", "svchost"],
-            },
-            "UM_APC": {
-                "mitre_id": "T1055.004",
-                "desc": "Process Injection: Asynchronous Procedure Call",
-                "keywords": ["apc", "user-mode hook"],
-            },
-            "C2_BEACON": {
-                "mitre_id": "T1071",
-                "desc": "Application Layer Protocol (C2)",
-                "keywords": [
-                    "beacon",
-                    "outbound",
-                    "established",
-                    "command-and-control",
-                    "connection",
-                ],
-            },
-        }
+        self.raw_signatures = copy.deepcopy(RAW_SIGNATURES)
 
         self.ioe_signatures = {}
         for ioe, data in self.raw_signatures.items():
@@ -114,13 +134,13 @@ class MitreMapper:
                         "matched_tactics": [
                             {
                                 "ioe_signature": "GENERIC_ANOMALY",
-                                "mitre_id": "T1106",
+                                "mitre_id": GENERIC_ANOMALY_MITRE_ID,
                                 "tactical_desc": "Suspicious execution without explicit signature match",
                             }
                         ],
                     }
                 )
-                unique_mitre_ids.add("T1106")
+                unique_mitre_ids.add(GENERIC_ANOMALY_MITRE_ID)
 
         total_unique_tactics = len(unique_mitre_ids)
 

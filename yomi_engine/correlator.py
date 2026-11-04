@@ -10,6 +10,15 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
 
+# MITRE tactic IDs that a corroboration check below depends on. Each must be
+# an ID MitreMapper can actually emit (yomi_engine.mitre_mapper.KNOWN_MITRE_IDS);
+# tests/unit/test_correlator.py asserts this, so a check written against a
+# tactic the mapper never produces fails a test instead of silently
+# becoming dead code (known issue #33).
+C2_TACTIC_ID = "T1071"
+PROCESS_INJECTION_TACTIC_ID = "T1055"
+CORROBORATED_TACTIC_IDS = frozenset({C2_TACTIC_ID, PROCESS_INJECTION_TACTIC_ID})
+
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - Cross-Artifact Correlator (Fase 7)
 # Purpose: Synthesizes structured results already produced by Hunter,
@@ -224,7 +233,7 @@ class CrossArtifactCorrelator:
         network evidence. Cross-check against Swarm's network findings
         before letting the claim stand as corroborated.
         """
-        claims_c2 = any(t.get("mitre_id") == "T1071" for t in case.mitre_tactics)
+        claims_c2 = any(t.get("mitre_id") == C2_TACTIC_ID for t in case.mitre_tactics)
         if not claims_c2:
             return
 
@@ -245,8 +254,8 @@ class CrossArtifactCorrelator:
             positive_signal.search(f.get("detail", "")) for f in case.network_findings
         )
         if network_confirms:
-            if "T1071" not in case.corroborated_tactics:
-                case.corroborated_tactics.append("T1071")
+            if C2_TACTIC_ID not in case.corroborated_tactics:
+                case.corroborated_tactics.append(C2_TACTIC_ID)
         else:
             case.contradictions.append(
                 {
@@ -265,7 +274,9 @@ class CrossArtifactCorrelator:
         in the Plaso timeline (e.g. an unbacked/anomalous memory region or
         injection-related process event), not just an anomaly-text hit.
         """
-        claims_injection = any(t.get("mitre_id") == "T1055" for t in case.mitre_tactics)
+        claims_injection = any(
+            t.get("mitre_id") == PROCESS_INJECTION_TACTIC_ID for t in case.mitre_tactics
+        )
         if not claims_injection:
             return
 
@@ -274,8 +285,8 @@ class CrossArtifactCorrelator:
             for e in case.timeline_events
         )
         if timeline_confirms:
-            if "T1055" not in case.corroborated_tactics:
-                case.corroborated_tactics.append("T1055")
+            if PROCESS_INJECTION_TACTIC_ID not in case.corroborated_tactics:
+                case.corroborated_tactics.append(PROCESS_INJECTION_TACTIC_ID)
         else:
             case.contradictions.append(
                 {
