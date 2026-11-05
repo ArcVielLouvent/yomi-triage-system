@@ -5,7 +5,40 @@ import stat
 import time
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent
+DATA_DIR_ENV_VAR = "YOMI_DATA_DIR"
+
+
+def resolve_data_dir(default: "str | os.PathLike[str]") -> str:
+    """Single source of truth for where Yomi keeps its evidence/data store.
+
+    Returns the absolute path in ``YOMI_DATA_DIR`` when that variable is set
+    and non-empty, otherwise ``default`` (each caller passes its own
+    ``__file__``-relative ``yomi_data`` directory, so behavior is unchanged
+    unless the operator opts in).
+
+    Known issue #27: for a ``pip install``-ed daemon the default ends up
+    inside the venv's ``site-packages/yomi_data/``. Setting
+    ``YOMI_DATA_DIR`` (e.g. ``/var/lib/yomi-triage``) relocates the evidence
+    ledger, HMAC key, CVE store, reports, remediation scripts, locks and
+    decoys together, because every module resolves its data directory
+    through this function.
+
+    A relative override is rejected: resolving it against whatever the
+    daemon's working directory happens to be would make the location of
+    forensic evidence unpredictable.
+    """
+    override = os.environ.get(DATA_DIR_ENV_VAR, "").strip()
+    if not override:
+        return os.path.abspath(os.fspath(default))
+    expanded = os.path.expanduser(override)
+    if not os.path.isabs(expanded):
+        raise ValueError(
+            f"{DATA_DIR_ENV_VAR} must be an absolute path, got {override!r}."
+        )
+    return os.path.normpath(expanded)
+
+
+DATA_DIR = Path(resolve_data_dir(Path(__file__).resolve().parent))
 CVE_STORE_DIR = DATA_DIR / "cve_store"
 MANIFEST_FILE = CVE_STORE_DIR / "manifest.json"
 LEDGER_FILE = DATA_DIR / "yomi_chain_of_custody.jsonl"
@@ -314,7 +347,44 @@ def load_year_store(year: int) -> dict[str, dict]:
     return _load_year_file(path)
 
 
+def _validate_year_store_shape(year_store: object) -> None:
+    """Reject, at write time, anything ``_validate_year_file`` would
+    quarantine at read time.
+
+    Same invariants as the read path: a JSON object of ``str -> dict``
+    where each entry's ``cve_id`` equals its own key. Raising here (instead
+    of writing and letting the next read silently quarantine the whole year
+    file) means a bad entry fails loudly at the call site that produced it.
+    """
+    if not isinstance(year_store, dict):
+        raise ValueError(
+            f"year_store must be a dict, got {type(year_store).__name__}."
+        )
+    for key, value in year_store.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"year_store key must be a str, got {type(key).__name__}: {key!r}."
+            )
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"year_store entry {key!r} must be a dict, "
+                f"got {type(value).__name__}."
+            )
+        if str(value.get("cve_id", "")) != key:
+            raise ValueError(
+                f"year_store entry {key!r} has cve_id "
+                f"{value.get('cve_id')!r}; the key must equal the entry's "
+                "'cve_id' field."
+            )
+
+
 def write_year_store(year: int, year_store: dict[str, dict]) -> None:
+    """Atomically write one year's CVE entries.
+
+    Raises ``ValueError`` (and writes nothing, leaving any existing file
+    untouched) if ``year_store`` would not survive the read-side validation.
+    """
+    _validate_year_store_shape(year_store)
     _ensure_directory(CVE_STORE_DIR, mode=DEFAULT_DIRECTORY_MODE)
     path = CVE_STORE_DIR / f"{year}.json"
     _atomic_write_json(path, year_store)
