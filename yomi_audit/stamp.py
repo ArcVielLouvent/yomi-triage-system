@@ -48,7 +48,9 @@ class ImmutableStamp:
             return cls._instance
 
     def _initialize(self):
-        self.data_dir = os.path.abspath(
+        from yomi_data import resolve_data_dir
+
+        self.data_dir = resolve_data_dir(
             os.path.join(os.path.dirname(__file__), "..", "yomi_data")
         )
         os.makedirs(self.data_dir, exist_ok=True)
@@ -403,25 +405,63 @@ class ImmutableStamp:
         except Exception as exc:
             print(f"[YOMI-AUDIT] Checkpoint creation failed: {exc}")
 
-    def cleanup_corrupt_backups(self, retain_last: int = 0) -> int:
-        deleted = 0
-        backups = []
-        for filename in os.listdir(self.data_dir):
-            if filename.startswith(
-                os.path.basename(self.ledger_file) + self.CORRUPT_SUFFIX
-            ):
-                backups.append(os.path.join(self.data_dir, filename))
+    # Sidecar written next to every corrupt-ledger backup copy.
+    _BACKUP_METADATA_SUFFIX = ".metadata.json"
 
-        backups.sort(key=lambda path: os.path.getmtime(path), reverse=True)
-        for index, backup_path in enumerate(backups):
+    def cleanup_corrupt_backups(self, retain_last: int = 0) -> int:
+        """Delete old corrupt-ledger backups, keeping the newest ``retain_last``
+        *incidents*.
+
+        One incident is the ``.jsonl`` copy written by
+        ``_backup_corrupted_ledger`` together with its ``.metadata.json``
+        sidecar; the two are always kept or deleted together (known issue
+        #24 -- they used to be counted as two unrelated files, so
+        ``retain_last=1`` could leave a lone sidecar and no ledger copy).
+        Incidents are ranked by their most recently modified file.
+
+        Returns the number of files deleted. ``retain_last <= 0`` deletes
+        every backup.
+        """
+        prefix = os.path.basename(self.ledger_file) + self.CORRUPT_SUFFIX
+        incidents: dict[str, list[str]] = {}
+        for filename in os.listdir(self.data_dir):
+            if not filename.startswith(prefix):
+                continue
+            incident_key = filename
+            if incident_key.endswith(self._BACKUP_METADATA_SUFFIX):
+                incident_key = incident_key[: -len(self._BACKUP_METADATA_SUFFIX)]
+            incidents.setdefault(incident_key, []).append(
+                os.path.join(self.data_dir, filename)
+            )
+
+        def newest_mtime(paths: list[str]) -> float:
+            mtimes = []
+            for path in paths:
+                try:
+                    mtimes.append(os.path.getmtime(path))
+                except OSError:
+                    pass
+            return max(mtimes, default=0.0)
+
+        # Newest incident first; the name (which embeds the epoch second)
+        # breaks mtime ties deterministically.
+        ranked = sorted(
+            incidents.items(),
+            key=lambda item: (newest_mtime(item[1]), item[0]),
+            reverse=True,
+        )
+
+        deleted = 0
+        for index, (_incident_key, paths) in enumerate(ranked):
             if retain_last > 0 and index < retain_last:
                 continue
-            try:
-                os.remove(backup_path)
-                deleted += 1
-            except OSError:
-                pass
-        print(f"[YOMI-AUDIT] Purged {deleted} old corrupt ledger backup(s).")
+            for backup_path in paths:
+                try:
+                    os.remove(backup_path)
+                    deleted += 1
+                except OSError:
+                    pass
+        print(f"[YOMI-AUDIT] Purged {deleted} old corrupt ledger backup file(s).")
         return deleted
 
     def _load_or_initialize_ledger(self) -> str:
