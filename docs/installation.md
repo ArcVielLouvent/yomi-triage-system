@@ -55,6 +55,27 @@ export YOMI_LOCAL_LLM_URL="your_local_llm_url"
 
 See [`docs/security.md`](security.md#1-security--compliance-framework) for the optional KMS-backed and ephemeral HMAC key modes for the audit ledger (`YOMI_AUDIT_HMAC_KMS_PROVIDER`, `YOMI_AUDIT_HMAC_MODE`).
 
+**Where Yomi keeps its data (optional)**
+
+By default the evidence ledger, HMAC key, CVE store, reports, remediation scripts, locks and decoys live in `yomi_data/` next to the package. For a `pip`-installed daemon that is inside the virtualenv's `site-packages`. To keep it somewhere predictable, set an absolute path (a relative path is rejected):
+
+```bash
+export YOMI_DATA_DIR=/var/lib/yomi-triage
+```
+
+For the systemd service, put `Environment=YOMI_DATA_DIR=/var/lib/yomi-triage` in the same override described in [`docs/usage.md`](usage.md). Set it before the first run: existing data is not moved automatically.
+
+**MCP vault boundaries (optional)**
+
+The MCP server only reads and writes inside allowlisted directories. If your case data lives outside the built-in ones (`/tmp`, `/var/tmp`, `/mnt`, `/home`, `/workspace`, `/data`, `/media`, `/opt/yomi` for reads; `/tmp`, `/var/tmp`, `/workspace/output`, `/data/output`, `/opt/yomi/output` for writes), add roots, separated by `:` on Linux:
+
+```bash
+export YOMI_MCP_READ_VAULTS=/srv/cases
+export YOMI_MCP_WRITE_VAULTS=/srv/cases/output
+```
+
+These only add to the built-in lists. Entries must be absolute paths and `/` is refused. The data directory is deliberately not added automatically because it contains the audit HMAC key.
+
 ---
 
 Once installed, see [`docs/usage.md`](usage.md) for how to run Yomi.
