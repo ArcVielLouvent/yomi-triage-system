@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - The Reverser (v4.5 - PRODUCTION)
@@ -29,7 +30,10 @@ class ReverserEngine:
     def __init__(self):
         self.audit = ImmutableStamp()
         self.remediation_dir = (
-            Path(__file__).resolve().parent.parent / "yomi_data" / "remediation"
+            Path(
+                resolve_data_dir(Path(__file__).resolve().parent.parent / "yomi_data")
+            )
+            / "remediation"
         )
         self.remediation_dir.mkdir(parents=True, exist_ok=True)
         self.gpg_binary = shutil.which("gpg")

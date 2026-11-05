@@ -13,6 +13,7 @@ from itertools import islice
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 from yomi_mcp.sift_toolkit import SiftArsenal
 
 # ==============================================================================
@@ -30,7 +31,10 @@ class SwarmOrchestrator:
         self.arsenal = SiftArsenal()
         self.active_reports = []
         
-        self.lock_vault = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "yomi_data", "locks"))
+        self.lock_vault = os.path.join(
+            resolve_data_dir(os.path.join(os.path.dirname(__file__), "..", "yomi_data")),
+            "locks",
+        )
         os.makedirs(self.lock_vault, exist_ok=True)
         os.chmod(self.lock_vault, 0o700)
 
