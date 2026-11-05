@@ -229,3 +229,47 @@ def test_to_report_text_shows_contradictions_section(correlator):
     text = case.to_report_text()
     assert "CONTRADICTIONS" in text
     assert "T1071" in text
+
+
+# --------------------------------------------------------------------------
+# Known issue #33: tactic IDs the correlator assumes must exist in MitreMapper
+# --------------------------------------------------------------------------
+
+def test_corroboration_tactic_ids_are_ones_mitre_mapper_can_emit():
+    """A corroboration check written for a tactic MitreMapper never produces
+    would silently no-op (its `claims_*` guard would never fire). Every ID
+    the correlator declares it corroborates must be a real MitreMapper ID."""
+    from yomi_engine.correlator import CORROBORATED_TACTIC_IDS
+    from yomi_engine.mitre_mapper import KNOWN_MITRE_IDS
+
+    assert CORROBORATED_TACTIC_IDS, "correlator declares no corroboration IDs"
+    missing = CORROBORATED_TACTIC_IDS - KNOWN_MITRE_IDS
+    assert not missing, (
+        f"correlator.py corroborates MITRE IDs MitreMapper never emits: "
+        f"{sorted(missing)}"
+    )
+
+
+def test_every_mitre_id_literal_in_correlator_exists_in_mitre_mapper():
+    """Catch a hard-coded tactic ID added to correlator.py without going
+    through CORROBORATED_TACTIC_IDS: scan its string literals (not comments
+    or docstrings) for ATT&CK-shaped IDs and check each against the mapper."""
+    import ast
+    import re
+
+    import yomi_engine.correlator as correlator_module
+    from yomi_engine.mitre_mapper import KNOWN_MITRE_IDS
+
+    tree = ast.parse(Path(correlator_module.__file__).read_text(encoding="utf-8"))
+    id_shape = re.compile(r"T\d{4}(?:\.\d{3})?")
+    literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id_shape.fullmatch(node.value)
+    }
+    assert literals <= KNOWN_MITRE_IDS, (
+        f"correlator.py hard-codes MITRE IDs MitreMapper never emits: "
+        f"{sorted(literals - KNOWN_MITRE_IDS)}"
+    )
