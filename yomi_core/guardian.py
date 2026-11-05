@@ -102,6 +102,12 @@ class GuardianOrchestrator:
         self._sandbox = None
         self._correlator = None
 
+        # Decoys THIS orchestrator deployed (pid -> os_target), so they can
+        # be torn down symmetrically at end of incident (known issue #30).
+        # Decoys sandbox.py deploys for itself are NOT tracked here -- it
+        # tears those down on its own.
+        self._deployed_decoys: dict[int, str] = {}
+
         # Populated by finalize_correlation(), consumed by
         # generate_incident_dossier(). See finalize_correlation()'s
         # docstring for why this can't just be computed inside
@@ -241,6 +247,8 @@ class GuardianOrchestrator:
                     summary["mirage"] = self._get_mirage().deploy_hallucination(
                         target_pid, os_target=os_target, force_enable=True
                     )
+                    if (summary["mirage"] or {}).get("status") == "SUCCESS":
+                        self._deployed_decoys[target_pid] = os_target
                 except Exception as exc:
                     self._log_dispatch_error("MIRAGE", target_pid, exc)
 
@@ -313,6 +321,33 @@ class GuardianOrchestrator:
                 metadata={"error": str(exc)},
             )
             return None
+
+    def teardown_incident_decoys(self) -> dict[int, bool]:
+        """
+        Tears down every Mirage decoy this orchestrator deployed, so each
+        ``HALLUCINATION_DEPLOYED`` it caused has a matching
+        ``HALLUCINATION_TEARDOWN`` (known issue #30: it used to leave them
+        for the periodic orphan sweep, which only runs once the owning
+        process is gone).
+
+        Call once at end of incident, after the dossier. Returns
+        ``{pid: torn_down}``; ``False`` just means there was nothing left to
+        remove (e.g. sandbox.py already removed the same decoy directory) or
+        teardown failed -- failures are logged, never raised, so end-of-
+        incident reporting is never blocked by cleanup.
+        """
+        results: dict[int, bool] = {}
+        for pid, os_target in list(self._deployed_decoys.items()):
+            try:
+                results[pid] = bool(
+                    self._get_mirage().teardown_hallucination(pid, os_target=os_target)
+                )
+            except Exception as exc:
+                results[pid] = False
+                self._log_dispatch_error("MIRAGE_TEARDOWN", pid, exc)
+            finally:
+                self._deployed_decoys.pop(pid, None)
+        return results
 
     # -- periodic (not per-incident) housekeeping ------------------------
 
