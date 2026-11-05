@@ -11,6 +11,7 @@ import stat
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
@@ -28,10 +29,9 @@ class SandboxEnvironment:
         self.os_bridge = OSBridge()
 
         # Define the absolute path for the isolation chamber
-        self.chamber_dir = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__), "..", "yomi_data", "lazarus_chamber"
-            )
+        self.chamber_dir = os.path.join(
+            resolve_data_dir(os.path.join(os.path.dirname(__file__), "..", "yomi_data")),
+            "lazarus_chamber",
         )
         os.makedirs(self.chamber_dir, exist_ok=True)
         self.active_sandboxes = {}

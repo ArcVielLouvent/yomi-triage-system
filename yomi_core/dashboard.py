@@ -15,6 +15,7 @@ from rich import box
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from yomi_data import resolve_data_dir
 from yomi_engine.library import OmniLibrary
 
 # ==============================================================================
@@ -230,13 +231,9 @@ class YomiDashboard:
             self.append_log(recent_log)
 
     def _refresh_telemetry_metrics(self):
-        tel_path = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "yomi_data",
-                "telemetry_benchmarks.jsonl",
-            )
+        tel_path = os.path.join(
+            resolve_data_dir(os.path.join(os.path.dirname(__file__), "..", "yomi_data")),
+            "telemetry_benchmarks.jsonl",
         )
 
         if not os.path.exists(tel_path):
