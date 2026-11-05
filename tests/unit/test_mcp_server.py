@@ -258,3 +258,111 @@ def test_call_tool_timeout_reports_orphaned(server, tmp_path, monkeypatch):
 
     response = json.loads(server.call_tool("run_ssdeep", {"target_path": str(target)}))
     assert "Execution Timeout" in response["error"]
+
+
+# --------------------------------------------------------------------------
+# Known issue #10: operator-configurable vaults
+# --------------------------------------------------------------------------
+# /srv is not on the built-in vault lists, and the vault check works on
+# resolved path strings (no file needs to exist), so these tests need no
+# filesystem setup outside pytest's tmp_path.
+
+def _make_server(monkeypatch, **env):
+    from yomi_mcp.mcp_server import YomiMCPServer
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    for key in ("YOMI_MCP_READ_VAULTS", "YOMI_MCP_WRITE_VAULTS"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return YomiMCPServer()
+
+
+def test_default_vaults_unchanged_when_env_unset(isolated_stamp, monkeypatch):
+    import os
+    from yomi_mcp.mcp_server import DEFAULT_READ_VAULTS, DEFAULT_WRITE_VAULTS
+
+    server = _make_server(monkeypatch)
+    assert server.READ_VAULTS == [os.path.realpath(p) for p in DEFAULT_READ_VAULTS]
+    assert server.WRITE_VAULTS == [os.path.realpath(p) for p in DEFAULT_WRITE_VAULTS]
+
+
+def test_path_outside_builtin_vaults_is_vetoed_by_default(isolated_stamp, monkeypatch):
+    server = _make_server(monkeypatch)
+    is_valid, msg, _ = server._validate_dynamic_arguments(
+        "run_volatility_pslist", {"memory_dump_path": "/srv/cases/memory.raw"}
+    )
+    assert is_valid is False
+    assert "READ vault boundaries" in msg
+
+
+def test_extra_read_vault_authorizes_deployment_outside_builtin_list(isolated_stamp, monkeypatch):
+    server = _make_server(monkeypatch, YOMI_MCP_READ_VAULTS="/srv/cases")
+    is_valid, msg, args = server._validate_dynamic_arguments(
+        "run_volatility_pslist", {"memory_dump_path": "/srv/cases/memory.raw"}
+    )
+    assert is_valid is True, msg
+    assert args["memory_dump_path"].endswith("/srv/cases/memory.raw")
+
+
+def test_extra_read_vault_does_not_authorize_writes(isolated_stamp, monkeypatch):
+    server = _make_server(monkeypatch, YOMI_MCP_READ_VAULTS="/srv/cases")
+    is_valid, msg, _ = server._validate_dynamic_arguments(
+        "run_bulk_extractor",
+        {"target_path": "/srv/cases/disk.dd", "output_dir": "/srv/cases/out"},
+    )
+    assert is_valid is False
+    assert "WRITE vault boundaries" in msg
+
+
+def test_extra_write_vault_authorizes_output_dir(isolated_stamp, monkeypatch):
+    server = _make_server(
+        monkeypatch,
+        YOMI_MCP_READ_VAULTS="/srv/cases",
+        YOMI_MCP_WRITE_VAULTS="/srv/cases/out",
+    )
+    is_valid, msg, _ = server._validate_dynamic_arguments(
+        "run_bulk_extractor",
+        {"target_path": "/srv/cases/disk.dd", "output_dir": "/srv/cases/out"},
+    )
+    assert is_valid is True, msg
+
+
+def test_extra_vaults_add_to_defaults_never_replace_them(isolated_stamp, monkeypatch, tmp_path):
+    server = _make_server(monkeypatch, YOMI_MCP_READ_VAULTS="/srv/cases")
+    dump = tmp_path / "memory.raw"
+    dump.write_bytes(b"x")
+    is_valid, msg, _ = server._validate_dynamic_arguments(
+        "run_volatility_pslist", {"memory_dump_path": str(dump)}
+    )
+    assert is_valid is True, msg  # /tmp (built-in) still authorized
+
+
+def test_extra_vault_does_not_match_string_prefix_sibling(isolated_stamp, monkeypatch):
+    server = _make_server(monkeypatch, YOMI_MCP_READ_VAULTS="/srv/cases")
+    is_valid, msg, _ = server._validate_dynamic_arguments(
+        "run_volatility_pslist", {"memory_dump_path": "/srv/cases_evil/memory.raw"}
+    )
+    assert is_valid is False
+    assert "vault boundaries" in msg
+
+
+def test_multiple_entries_use_os_pathsep_and_blanks_are_ignored(isolated_stamp, monkeypatch):
+    import os
+
+    value = os.pathsep.join(["/srv/a", "", "  ", "/srv/b"])
+    server = _make_server(monkeypatch, YOMI_MCP_READ_VAULTS=value)
+    assert os.path.realpath("/srv/a") in server.READ_VAULTS
+    assert os.path.realpath("/srv/b") in server.READ_VAULTS
+
+
+@pytest.mark.parametrize("bad", ["relative/dir", "./here"])
+def test_relative_vault_entry_fails_loudly(isolated_stamp, monkeypatch, bad):
+    with pytest.raises(ValueError, match="absolute"):
+        _make_server(monkeypatch, YOMI_MCP_READ_VAULTS=bad)
+
+
+@pytest.mark.parametrize("var", ["YOMI_MCP_READ_VAULTS", "YOMI_MCP_WRITE_VAULTS"])
+def test_filesystem_root_vault_is_refused(isolated_stamp, monkeypatch, var):
+    with pytest.raises(ValueError, match="root"):
+        _make_server(monkeypatch, **{var: "/"})
