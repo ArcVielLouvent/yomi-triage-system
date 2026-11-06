@@ -109,3 +109,55 @@ def test_matching_is_case_insensitive(mapper):
     results = mapper.map_anomalies(["SHELLCODE INJECTION DETECTED"])
     tactic_ids = {t["mitre_id"] for t in results[0]["matched_tactics"]}
     assert "T1055" in tactic_ids
+
+
+# --------------------------------------------------------------------------
+# Known issue #33: KNOWN_MITRE_IDS must track the real signature table
+# --------------------------------------------------------------------------
+
+def test_known_mitre_ids_matches_signature_table_plus_generic_fallback():
+    from yomi_engine.mitre_mapper import (
+        GENERIC_ANOMALY_MITRE_ID,
+        KNOWN_MITRE_IDS,
+        RAW_SIGNATURES,
+    )
+
+    expected = {s["mitre_id"] for s in RAW_SIGNATURES.values()}
+    expected.add(GENERIC_ANOMALY_MITRE_ID)
+    assert KNOWN_MITRE_IDS == frozenset(expected)
+
+
+def test_known_mitre_ids_importable_without_instantiating_mapper():
+    # No `mapper`/`isolated_stamp` fixture: importing must not require
+    # creating an ImmutableStamp.
+    from yomi_engine.mitre_mapper import KNOWN_MITRE_IDS, MitreMapper
+
+    assert isinstance(KNOWN_MITRE_IDS, frozenset)
+    assert MitreMapper.KNOWN_MITRE_IDS is KNOWN_MITRE_IDS
+
+
+def test_every_emitted_mitre_id_is_in_known_set(mapper):
+    from yomi_engine.mitre_mapper import KNOWN_MITRE_IDS
+
+    results = mapper.map_anomalies(
+        [
+            "inject unbacked vad shellcode",
+            "ransom high-entropy encrypt",
+            "dkom bad dtb",
+            "peb masquerad svchost",
+            "apc user-mode hook",
+            "beacon outbound",
+            "something no signature matches",
+        ]
+    )
+    emitted = {t["mitre_id"] for r in results for t in r["matched_tactics"]}
+    assert emitted <= KNOWN_MITRE_IDS
+    assert emitted == set(KNOWN_MITRE_IDS)  # the table and the set cannot drift
+
+
+def test_instances_do_not_share_signature_state(mapper, isolated_stamp):
+    from yomi_engine.mitre_mapper import RAW_SIGNATURES, MitreMapper
+
+    mapper.raw_signatures["PE_INJECT"]["keywords"].append("tampered")
+    assert "tampered" not in RAW_SIGNATURES["PE_INJECT"]["keywords"]
+    assert "tampered" not in MitreMapper().raw_signatures["PE_INJECT"]["keywords"]

@@ -7,6 +7,7 @@ import stat
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - The Mirage Protocol (v4.0 - PRODUCTION)
@@ -22,14 +23,10 @@ class MirageProtocol:
         self.audit = ImmutableStamp()
 
         # Define the absolute path for the hallucinatory environment
-        self.mirage_dir = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "yomi_data",
-                "lazarus_chamber",
-                "mirage_env",
-            )
+        self.mirage_dir = os.path.join(
+            resolve_data_dir(os.path.join(os.path.dirname(__file__), "..", "yomi_data")),
+            "lazarus_chamber",
+            "mirage_env",
         )
         os.makedirs(self.mirage_dir, exist_ok=True)
 
@@ -102,6 +99,24 @@ class MirageProtocol:
             self.audit.record_action("MIRAGE", "ERROR", error_msg)
             return {"status": "ERROR", "reason": error_msg}
 
+    def _is_inside_mirage_dir(self, path: str) -> bool:
+        """True only if ``path`` resolves to a location strictly inside
+        ``mirage_dir``.
+
+        Uses real path containment (``os.path.commonpath`` on resolved paths),
+        not a string prefix check: ``.../mirage_env_EVIL`` must NOT count as
+        inside ``.../mirage_env`` (known issue #16), and a symlink that
+        points outside ``mirage_dir`` must not count as inside it either.
+        ``mirage_dir`` itself is not "inside" -- teardown must never be able
+        to remove the whole decoy root.
+        """
+        root = os.path.realpath(self.mirage_dir)
+        resolved = os.path.realpath(path)
+        try:
+            return resolved != root and os.path.commonpath([root, resolved]) == root
+        except ValueError:  # e.g. different drives on Windows
+            return False
+
     def teardown_hallucination(self, target_pid: int, os_target: str = "LINUX") -> bool:
         """
         Ephemeral Cleanup. Destroys the decoy environment after triage is complete.
@@ -112,9 +127,7 @@ class MirageProtocol:
             target_path = os.path.join(self.mirage_dir, f"{prefix}_target_{safe_pid}")
 
             # Absolute Security Boundary Check: Ensure we only delete inside mirage_dir
-            if os.path.abspath(target_path).startswith(
-                self.mirage_dir
-            ) and os.path.exists(target_path):
+            if self._is_inside_mirage_dir(target_path) and os.path.exists(target_path):
                 shutil.rmtree(target_path, ignore_errors=True)
                 msg = f"Decoy environment for PID {safe_pid} securely destroyed."
                 print(f"[*] {msg}")

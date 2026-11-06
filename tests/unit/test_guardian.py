@@ -13,6 +13,7 @@ internally (that's what each module's own test file is for).
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -267,6 +268,118 @@ def test_post_containment_sandbox_disabled_never_dispatches_mirage(guardian, mon
 
     mock_sandbox_cls.assert_not_called()
     mock_mirage_cls.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# Known issue #30: Guardian tears down the decoys it deployed itself
+# --------------------------------------------------------------------------
+
+def _guardian_with_mock_mirage(monkeypatch, deploy_result):
+    monkeypatch.setenv("YOMI_MODULE_SANDBOX", "true")
+    monkeypatch.setenv("YOMI_MODULE_MIRAGE", "true")
+    from yomi_core.guardian import GuardianOrchestrator
+
+    guardian = GuardianOrchestrator()
+    monkeypatch.setattr("yomi_core.guardian._resolve_exe_path", lambda pid: "/tmp/malware.bin")
+    monkeypatch.setattr(
+        "yomi_engine.mind_reader.MindReaderDecompiler",
+        MagicMock(return_value=MagicMock(decompile_and_profile=MagicMock(return_value={}))),
+    )
+    monkeypatch.setattr(
+        "yomi_engine.remediator.ReverserEngine",
+        MagicMock(return_value=MagicMock(generate_rollback_script=MagicMock(return_value={}))),
+    )
+    monkeypatch.setattr(
+        "yomi_engine.sandbox.SandboxEnvironment",
+        MagicMock(return_value=MagicMock(execute_resurrection=MagicMock(return_value={}))),
+    )
+    mock_mirage = MagicMock()
+    mock_mirage.deploy_hallucination.return_value = deploy_result
+    mock_mirage.teardown_hallucination.return_value = True
+    monkeypatch.setattr("yomi_engine.mirage.MirageProtocol", MagicMock(return_value=mock_mirage))
+    return guardian, mock_mirage
+
+
+def test_teardown_incident_decoys_removes_decoy_guardian_deployed(monkeypatch, isolated_stamp):
+    guardian, mock_mirage = _guardian_with_mock_mirage(
+        monkeypatch, {"status": "SUCCESS", "mirage_path": "/x/linux_target_5000"}
+    )
+    guardian.handle_post_containment(5000)
+    mock_mirage.teardown_hallucination.assert_not_called()  # not before end of incident
+
+    results = guardian.teardown_incident_decoys()
+
+    assert results == {5000: True}
+    mock_mirage.teardown_hallucination.assert_called_once()
+    args, kwargs = mock_mirage.teardown_hallucination.call_args
+    assert args[0] == 5000
+    assert kwargs.get("os_target") in ("LINUX", "WINDOWS")
+    # Tracking is cleared, so a second call is a no-op.
+    assert guardian.teardown_incident_decoys() == {}
+    mock_mirage.teardown_hallucination.assert_called_once()
+
+
+def test_teardown_incident_decoys_ignores_failed_or_skipped_deployments(monkeypatch, isolated_stamp):
+    guardian, mock_mirage = _guardian_with_mock_mirage(
+        monkeypatch, {"status": "ERROR", "reason": "boom"}
+    )
+    guardian.handle_post_containment(5000)
+
+    assert guardian.teardown_incident_decoys() == {}
+    mock_mirage.teardown_hallucination.assert_not_called()
+
+
+def test_teardown_incident_decoys_noop_when_nothing_deployed(guardian):
+    assert guardian.teardown_incident_decoys() == {}
+
+
+def test_teardown_incident_decoys_exception_is_caught_and_logged(monkeypatch, isolated_stamp):
+    guardian, mock_mirage = _guardian_with_mock_mirage(monkeypatch, {"status": "SUCCESS"})
+    mock_mirage.teardown_hallucination.side_effect = RuntimeError("rmtree exploded")
+    guardian.handle_post_containment(5000)
+
+    results = guardian.teardown_incident_decoys()  # must not raise
+
+    assert results == {5000: False}
+    assert "MIRAGE_TEARDOWN_DISPATCH_ERROR" in _ledger_action_types(isolated_stamp)
+    assert guardian.teardown_incident_decoys() == {}  # still cleared
+
+
+def test_deploy_and_teardown_ledger_entries_are_symmetric_end_to_end(monkeypatch, isolated_stamp, tmp_path):
+    """Real MirageProtocol against a temp dir: one deploy, one teardown,
+    nothing left on disk (the ledger-asymmetry symptom from known issue #30)."""
+    monkeypatch.setenv("YOMI_MODULE_SANDBOX", "true")
+    monkeypatch.setenv("YOMI_MODULE_MIRAGE", "true")
+    monkeypatch.setattr("yomi_core.guardian._resolve_exe_path", lambda pid: "/tmp/malware.bin")
+    monkeypatch.setattr(
+        "yomi_engine.mind_reader.MindReaderDecompiler",
+        MagicMock(return_value=MagicMock(decompile_and_profile=MagicMock(return_value={}))),
+    )
+    monkeypatch.setattr(
+        "yomi_engine.remediator.ReverserEngine",
+        MagicMock(return_value=MagicMock(generate_rollback_script=MagicMock(return_value={}))),
+    )
+    monkeypatch.setattr(
+        "yomi_engine.sandbox.SandboxEnvironment",
+        MagicMock(return_value=MagicMock(execute_resurrection=MagicMock(return_value={}))),
+    )
+    from yomi_core.guardian import GuardianOrchestrator
+    from yomi_engine.mirage import MirageProtocol
+
+    guardian = GuardianOrchestrator()
+    real_mirage = MirageProtocol()
+    real_mirage.mirage_dir = str(tmp_path / "mirage_env")
+    os.makedirs(real_mirage.mirage_dir)
+    guardian._mirage = real_mirage
+
+    guardian.handle_post_containment(4242)
+    assert os.listdir(real_mirage.mirage_dir)  # decoy exists
+    guardian.teardown_incident_decoys()
+
+    assert os.listdir(real_mirage.mirage_dir) == []
+    actions = _ledger_action_types(isolated_stamp)
+    assert actions.count("HALLUCINATION_DEPLOYED") == 1
+    assert actions.count("HALLUCINATION_TEARDOWN") == 1
 
 
 def test_mirage_enabled_without_sandbox_dependency_fails_loud_at_construction(isolated_stamp, monkeypatch):

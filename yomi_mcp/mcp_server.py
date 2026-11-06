@@ -23,6 +23,57 @@ from yomi_audit.stamp import ImmutableStamp
 # ==============================================================================
 
 
+DEFAULT_READ_VAULTS = (
+    "/tmp",
+    "/var/tmp",
+    "/mnt",
+    "/home",
+    "/workspace",
+    "/data",
+    "/media",
+    "/opt/yomi",
+)
+DEFAULT_WRITE_VAULTS = (
+    "/tmp",
+    "/var/tmp",
+    "/workspace/output",
+    "/data/output",
+    "/opt/yomi/output",
+)
+READ_VAULTS_ENV_VAR = "YOMI_MCP_READ_VAULTS"
+WRITE_VAULTS_ENV_VAR = "YOMI_MCP_WRITE_VAULTS"
+
+
+def _extra_vaults_from_env(env_var: str) -> list[str]:
+    """Operator-configured vault roots, ``os.pathsep``-separated.
+
+    Known issue #10: the built-in vault lists are hardcoded absolute
+    prefixes, so a deployment outside them (e.g. ``/srv/cases``) had every
+    MCP tool call vetoed. These variables ADD roots to the built-in lists;
+    they never remove any. A vault is a security allowlist, so a bad entry
+    fails loudly instead of being skipped: entries must be absolute, and
+    ``/`` is refused because it would authorize every path.
+    """
+    raw = os.environ.get(env_var, "")
+    extras: list[str] = []
+    for entry in raw.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if not os.path.isabs(entry):
+            raise ValueError(
+                f"{env_var} entries must be absolute paths, got {entry!r}."
+            )
+        resolved = os.path.realpath(entry)
+        if resolved == os.path.realpath(os.sep):
+            raise ValueError(
+                f"{env_var} must not contain the filesystem root ({entry!r}): "
+                "it would authorize every path."
+            )
+        extras.append(resolved)
+    return extras
+
+
 class YomiMCPServer:
     def __init__(self):
         self.arsenal = SiftArsenal()
@@ -38,30 +89,14 @@ class YomiMCPServer:
         self.active_tasks = 0
         self.task_lock = threading.Lock()
 
+        # Built-in vaults plus any operator-configured roots (known issue #10).
         self.READ_VAULTS = [
-            os.path.realpath(p)
-            for p in [
-                "/tmp",
-                "/var/tmp",
-                "/mnt",
-                "/home",
-                "/workspace",
-                "/data",
-                "/media",
-                "/opt/yomi",
-            ]
-        ]
+            os.path.realpath(p) for p in DEFAULT_READ_VAULTS
+        ] + _extra_vaults_from_env(READ_VAULTS_ENV_VAR)
 
         self.WRITE_VAULTS = [
-            os.path.realpath(p)
-            for p in [
-                "/tmp",
-                "/var/tmp",
-                "/workspace/output",
-                "/data/output",
-                "/opt/yomi/output",
-            ]
-        ]
+            os.path.realpath(p) for p in DEFAULT_WRITE_VAULTS
+        ] + _extra_vaults_from_env(WRITE_VAULTS_ENV_VAR)
 
         self.tool_registry = {
             "run_cryogenic_freeze": {

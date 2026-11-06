@@ -10,6 +10,7 @@ import stat
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 from yomi_mcp.os_bridge import OSBridge
 
 # ==============================================================================
@@ -41,8 +42,11 @@ class ShadowNetProtocol:
         # permission on any filesystem, ACL or not.
         old_umask = os.umask(0o077)
         try:
-            self.recovery_dir = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "yomi_data", "recovery")
+            self.recovery_dir = os.path.join(
+                resolve_data_dir(
+                    os.path.join(os.path.dirname(__file__), "..", "yomi_data")
+                ),
+                "recovery",
             )
             os.makedirs(self.recovery_dir, exist_ok=True)
             os.chmod(self.recovery_dir, 0o700)

@@ -402,21 +402,34 @@ def _jsonl_backup_files(instance):
     return [f for f in _all_backup_related_files(instance) if f.endswith(".jsonl")]
 
 
-def test_cleanup_corrupt_backups_retains_requested_count(isolated_stamp):
-    for _ in range(3):
-        isolated_stamp._backup_corrupted_ledger(reason="round")
-        time.sleep(1.05)  # backup filenames resolve per-second, not per-ms
+def _make_incidents(instance, monkeypatch, count):
+    """Create `count` backup incidents with distinct, increasing timestamps
+    (no real sleeping: backup names embed int(time.time()))."""
+    from yomi_audit import stamp as stamp_module
+
+    base = 1_700_000_000
+    for i in range(count):
+        monkeypatch.setattr(stamp_module.time, "time", lambda t=base + i * 10: float(t))
+        instance._backup_corrupted_ledger(reason=f"round {i}")
+        # make mtimes follow creation order regardless of fs timestamp granularity
+        for name in _all_backup_related_files(instance):
+            full = os.path.join(instance.data_dir, name)
+            if str(base + i * 10) in name:
+                os.utime(full, (base + i * 10, base + i * 10))
+
+
+def test_cleanup_corrupt_backups_retains_requested_count(isolated_stamp, monkeypatch):
+    _make_incidents(isolated_stamp, monkeypatch, 3)
 
     assert len(_jsonl_backup_files(isolated_stamp)) == 3
-    # Each backup round writes 2 files (the .jsonl copy + its
-    # .metadata.json sidecar) -- see
-    # test_cleanup_corrupt_backups_retain_last_counts_files_not_incidents
-    # below for why "retain_last" doesn't mean "retain N incidents".
+    # Each incident is 2 files: the .jsonl copy + its .metadata.json sidecar.
     assert len(_all_backup_related_files(isolated_stamp)) == 6
 
     deleted = isolated_stamp.cleanup_corrupt_backups(retain_last=1)
-    assert deleted == 5
-    assert len(_all_backup_related_files(isolated_stamp)) == 1
+    assert deleted == 4  # two whole incidents (2 files each)
+    remaining = _all_backup_related_files(isolated_stamp)
+    assert len(remaining) == 2
+    assert len(_jsonl_backup_files(isolated_stamp)) == 1
 
 
 def test_cleanup_corrupt_backups_retain_zero_deletes_all(isolated_stamp):
@@ -427,27 +440,52 @@ def test_cleanup_corrupt_backups_retain_zero_deletes_all(isolated_stamp):
     assert _all_backup_related_files(isolated_stamp) == []
 
 
-def test_cleanup_corrupt_backups_retain_last_counts_files_not_incidents(isolated_stamp):
+def test_cleanup_corrupt_backups_retain_last_keeps_whole_incident(isolated_stamp):
     """
-    Documents a real design nuance (not a crash, not data loss of the
-    ledger itself, but worth knowing): cleanup_corrupt_backups's
-    retain_last operates on the flat, mtime-sorted list of every file
-    whose name starts with the backup prefix -- and each "incident"
-    produces TWO such files (the .jsonl copy and its .metadata.json
-    sidecar), listed and counted as independent entries. So
-    retain_last=1 does not mean "keep the most recent full incident"; it
-    means "keep the single most-recently-modified file", which is
-    whichever of the pair was written last (the metadata.json, since
-    _backup_corrupted_ledger writes it after the .jsonl copy). The
-    result can be a metadata.json with no matching .jsonl backup left
-    beside it.
+    Known issue #24 (FIXED): retain_last used to count individual files, so
+    retain_last=1 kept only the newest *file* -- always the .metadata.json
+    sidecar -- and deleted the .jsonl backup it described. It now counts
+    incidents, so a .jsonl and its sidecar are always kept together.
     """
     isolated_stamp._backup_corrupted_ledger(reason="only incident")
+    deleted = isolated_stamp.cleanup_corrupt_backups(retain_last=1)
+
+    assert deleted == 0
+    remaining = _all_backup_related_files(isolated_stamp)
+    assert len(remaining) == 2
+    assert any(f.endswith(".jsonl") for f in remaining)
+    assert any(f.endswith(".metadata.json") for f in remaining)
+
+
+def test_cleanup_corrupt_backups_keeps_newest_incidents_as_pairs(isolated_stamp, monkeypatch):
+    _make_incidents(isolated_stamp, monkeypatch, 3)
+
+    deleted = isolated_stamp.cleanup_corrupt_backups(retain_last=2)
+    assert deleted == 2
+
+    jsonl = sorted(_jsonl_backup_files(isolated_stamp))
+    assert len(jsonl) == 2
+    # The two newest incidents (base+10, base+20) survive, each with its sidecar.
+    assert all(("1700000010" in f or "1700000020" in f) for f in jsonl)
+    for name in jsonl:
+        assert name + ".metadata.json" in _all_backup_related_files(isolated_stamp)
+    assert not any("1700000000" in f for f in _all_backup_related_files(isolated_stamp))
+
+
+def test_cleanup_corrupt_backups_orphan_sidecar_counts_as_own_incident(isolated_stamp, monkeypatch):
+    _make_incidents(isolated_stamp, monkeypatch, 2)
+    # Simulate legacy damage: the newest incident lost its .jsonl copy.
+    for name in _jsonl_backup_files(isolated_stamp):
+        if "1700000010" in name:
+            os.remove(os.path.join(isolated_stamp.data_dir, name))
+
     isolated_stamp.cleanup_corrupt_backups(retain_last=1)
 
     remaining = _all_backup_related_files(isolated_stamp)
+    # Newest incident (now sidecar-only) is the one retained; the older
+    # complete incident is purged as a unit.
     assert len(remaining) == 1
-    assert remaining[0].endswith(".metadata.json")
+    assert remaining[0].endswith(".metadata.json") and "1700000010" in remaining[0]
 
 
 def test_cleanup_corrupt_backups_handles_missing_file_gracefully(isolated_stamp, monkeypatch):

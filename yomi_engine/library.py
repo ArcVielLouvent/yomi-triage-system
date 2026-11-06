@@ -14,6 +14,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from yomi_audit.stamp import ImmutableStamp
+from yomi_data import resolve_data_dir
 
 # ==============================================================================
 # YOMI TRIAGE SYSTEM: Engine Module - The Omni-Library
@@ -35,7 +36,7 @@ class OmniLibrary:
         self.data_dir = (
             data_dir
             if data_dir
-            else os.path.abspath(
+            else resolve_data_dir(
                 os.path.join(os.path.dirname(__file__), "..", "yomi_data")
             )
         )

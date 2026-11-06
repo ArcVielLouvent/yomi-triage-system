@@ -229,6 +229,7 @@ class SentinelDaemon:
             )
 
         self.guardian.generate_incident_dossier()
+        self.guardian.teardown_incident_decoys()
 
         if not instant_freeze_applied:
             executed_action = triage_result.get("status", "UNKNOWN_ACTION")

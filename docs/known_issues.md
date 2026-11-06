@@ -77,11 +77,17 @@ sessions or phases, and each entry says whether it's fixed yet.
 8. **`write_year_store()` (yomi_data) performs no shape validation at write
    time.** An entry missing a matching `cve_id` field writes successfully
    with zero error, then silently vanishes (quarantined as corrupt) on the
-   next read/scan. Captured as a regression test
-   (`test_write_year_store_silently_drops_entries_missing_cve_id` in
-   `tests/unit/test_yomi_data.py`) so the bug can't regress further, but
-   the actual fix (validate on write, raise instead of silently accepting)
-   is not yet implemented.
+   next read/scan.
+
+   Status: **FIXED (known-issues cleanup).** `write_year_store()` now
+   validates the same invariants as the read path (`dict[str, dict]`, each
+   entry's `cve_id` equal to its key) and raises `ValueError` before
+   writing anything, leaving any existing year file untouched. It had no
+   non-test callers. Covered by
+   `test_write_year_store_rejects_entries_missing_cve_id`,
+   `test_write_year_store_rejects_other_malformed_shapes` and
+   `test_rejected_write_leaves_existing_year_file_untouched` in
+   `tests/unit/test_yomi_data.py`.
 
 9. **`ImmutableStamp` (stamp.py) and `yomi_data/__init__.py` both hardcode
    their data directory relative to `__file__`,** with `ImmutableStamp`
@@ -97,8 +103,16 @@ sessions or phases, and each entry says whether it's fixed yet.
     `/workspace`, `/data`, `/media`, `/opt/yomi`), not derived from
     `yomi_data`'s actual location. A deployment outside those trees will
     have every MCP tool call VETOed as "outside vault boundaries" even when
-    legitimate. Portability concern for enterprise deployment; not yet
-    addressed.
+    legitimate. Portability concern for enterprise deployment.
+
+    Status: **FIXED (known-issues cleanup).** The built-in lists are now
+    `DEFAULT_READ_VAULTS` / `DEFAULT_WRITE_VAULTS` and operators can ADD
+    roots with `YOMI_MCP_READ_VAULTS` / `YOMI_MCP_WRITE_VAULTS`
+    (`os.pathsep`-separated absolute paths; they never remove a built-in
+    root). A relative entry or `/` raises `ValueError` at construction,
+    since a vault is a security allowlist and must not be skipped
+    silently. The data directory is deliberately NOT added automatically:
+    it holds the HMAC key. Covered in `tests/unit/test_mcp_server.py`.
 
 ## Architectural gaps (not bugs, but the reason Guardian/Module Registry exist)
 
@@ -265,10 +279,17 @@ sessions or phases, and each entry says whether it's fixed yet.
     through the current public API (target_path is always built from an
     int-cast pid + a 2-value-constrained prefix), but flagged as a pattern
     to avoid if this code is ever refactored to accept more flexible
-    input. Captured as
-    `test_teardown_boundary_check_documented_prefix_weakness`.
+    input.
 
-    Status: OPEN (defense-in-depth hardening, not urgent).
+    Status: **FIXED (known-issues cleanup).** The check is now
+    `MirageProtocol._is_inside_mirage_dir()`: real path containment
+    (`os.path.realpath` + `os.path.commonpath`), strictly inside
+    `mirage_dir` (the root itself does not count), so a string-prefix
+    sibling or a symlink pointing outside is refused. Covered by
+    `test_boundary_check_rejects_string_prefix_sibling`,
+    `test_boundary_check_accepts_real_children_only` and
+    `test_teardown_refuses_symlink_that_escapes_mirage_dir` in
+    `tests/unit/test_mirage.py`.
 
 ## Fase 2 Batch 3 findings (library.py, sift_toolkit.py) — FIXED
 
@@ -430,15 +451,16 @@ sessions or phases, and each entry says whether it's fixed yet.
     could end up with less than they expect if they ever need to inspect
     a backup after a corruption event.
 
-    Captured as:
-    `tests/unit/test_stamp_coverage.py::test_cleanup_corrupt_backups_retain_last_counts_files_not_incidents`
-
-    Status: OPEN. Straightforward fix would be to group files by their
-    shared incident prefix (everything before `.jsonl`/`.metadata.json`)
-    before sorting/retaining, so a `.jsonl` and its `.metadata.json`
-    are always kept or deleted together. Not fixed here (found while
-    writing coverage tests for #12, not itself a test-writing task);
-    flagged for whoever next touches this function.
+    Status: **FIXED (known-issues cleanup).** Files are grouped by
+    incident (the `.jsonl` name, with the `.metadata.json` suffix
+    stripped), incidents are ranked by their newest file, and
+    `retain_last=N` keeps the N newest incidents, so a `.jsonl` and its
+    sidecar are always kept or deleted together. The return value is still
+    the number of files deleted. Covered by
+    `test_cleanup_corrupt_backups_retain_last_keeps_whole_incident`,
+    `test_cleanup_corrupt_backups_keeps_newest_incidents_as_pairs` and
+    `test_cleanup_corrupt_backups_orphan_sidecar_counts_as_own_incident`
+    in `tests/unit/test_stamp_coverage.py`.
 
 ## Fase 6 findings (Guardian Orchestrator integration work)
 
@@ -493,16 +515,19 @@ sessions or phases, and each entry says whether it's fixed yet.
     store's location needs to be predictable and documented, not
     implicit inside a venv's package directory.
 
-    Status: OPEN. Worked around for now by printing the exact resolved
-    path at the end of `scripts/install_yomi_linux.sh`. A real fix
-    would be a `YOMI_DATA_DIR` env var override respected by
-    `ImmutableStamp`, `OmniLibrary`, and everything else that currently
-    does `os.path.join(os.path.dirname(__file__), "..", "yomi_data")`,
-    defaulting to a standard Linux FHS location like
-    `/var/lib/yomi-triage` for `pip`-installed daemons. That's a
-    broader, cross-cutting change (touches every module with
-    `__file__`-relative data paths) -- flagged for Fase 6 Tahap 2, not
-    done here.
+    Status: **FIXED (known-issues cleanup), with one deliberate
+    omission.** `yomi_data.resolve_data_dir()` is now the single resolver:
+    when `YOMI_DATA_DIR` is set to an absolute path, `ImmutableStamp`,
+    `OmniLibrary`, dossier, remediator, swarm, sandbox, shadow_net,
+    mirage, the dashboard and `yomi_data` itself all keep their data
+    there; a relative value raises `ValueError`. With the variable unset
+    the default is unchanged (`yomi_data/` next to the package), and
+    `scripts/install_yomi_linux.sh` still prints the resolved path. NOT
+    done: defaulting `pip`-installed daemons to an FHS location such as
+    `/var/lib/yomi-triage` -- that changes where existing installs look
+    for their evidence, so it needs an explicit decision (the install
+    script or service unit can export `YOMI_DATA_DIR` meanwhile).
+    Covered by `tests/unit/test_data_dir_override.py`.
 
 28. **A dev/test `yomi_data/audit_hmac.key` already present in the
     checkout gets silently copied into a "production" install via
@@ -556,10 +581,14 @@ sessions or phases, and each entry says whether it's fixed yet.
     ledger inconsistency. Found while capturing real demo output for
     `docs/demo_mode.md`.
 
-    Status: OPEN. A real fix would have `GuardianOrchestrator` track and
-    tear down decoys it deployed itself, symmetric with `sandbox.py`'s
-    own handling -- not done here (found while writing documentation,
-    not itself a coding task this session).
+    Status: **FIXED (known-issues cleanup).** `GuardianOrchestrator`
+    records each decoy it deploys successfully and
+    `teardown_incident_decoys()` removes them; `sentinel.py` calls it at
+    end of incident, after the dossier. Failures are logged as
+    `MIRAGE_TEARDOWN_DISPATCH_ERROR` and never raised. Decoys that
+    `sandbox.py` deploys for itself are still torn down by `sandbox.py`.
+    The periodic orphan sweep remains as the backstop. Covered in
+    `tests/unit/test_guardian.py`.
 
 31. **Telemetry benchmark named after and printed unverified "win"
     claims against a specific competitor's trademarked product.**
@@ -644,17 +673,17 @@ sessions or phases, and each entry says whether it's fixed yet.
     (`test_t1071_is_a_contradiction_when_network_agent_finds_nothing`)
     guards this specific case going forward.
 
-    Status: **FIXED for both specific instances** (dead credential-access
-    check replaced with a real T1055/Process-Injection check;
-    C2 corroboration regex narrowed + regression-tested). **OPEN as a
-    broader design gap**: nothing links "MITRE tactic IDs a correlation
-    check assumes exist" to "MITRE tactic IDs `MitreMapper` actually
-    defines" at test-collection or CI time -- a future correlator
-    corroboration check for a tactic ID that doesn't exist in
-    `mitre_mapper.py`'s signature table would silently no-op again,
-    the same way this one almost did. A real fix would have
-    `MitreMapper` expose its known tactic ID set (e.g. a
-    `KNOWN_MITRE_IDS` frozenset) that `correlator.py`'s own test suite
-    asserts every corroboration check's referenced `mitre_id` against,
-    turning this class of mistake into a test failure instead of a
-    silent no-op.
+    Status: **FIXED.** Both specific instances were fixed in Fase 7
+    (dead credential-access check replaced with a real
+    T1055/Process-Injection check; C2 corroboration regex narrowed and
+    regression-tested). The broader design gap was fixed in the
+    known-issues cleanup: `mitre_mapper.py` now exposes `RAW_SIGNATURES`,
+    `GENERIC_ANOMALY_MITRE_ID` and a `KNOWN_MITRE_IDS` frozenset
+    (importable without instantiating `MitreMapper`), and
+    `correlator.py` declares the IDs its checks depend on as
+    `C2_TACTIC_ID` / `PROCESS_INJECTION_TACTIC_ID` /
+    `CORROBORATED_TACTIC_IDS`. Two tests in
+    `tests/unit/test_correlator.py` assert those IDs, and every
+    ATT&CK-shaped string literal in `correlator.py`, are in
+    `KNOWN_MITRE_IDS`, so a check written against a tactic the mapper
+    never emits is now a test failure instead of a silent no-op.

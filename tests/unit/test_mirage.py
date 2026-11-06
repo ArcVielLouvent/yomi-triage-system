@@ -1,14 +1,14 @@
 """
 Unit tests for yomi_engine.mirage.MirageProtocol.
 
-Notes a theoretical (not currently exploitable through the public API)
-path-containment weakness: teardown_hallucination's "Absolute Security
-Boundary Check" uses `.startswith(self.mirage_dir)` on a plain string,
-which is vulnerable to sibling-directory prefix matching (e.g.
-"/mirage_env_EVIL" also starts with "/mirage_env"). Not exploitable here
-specifically because target_path is always built via os.path.join with an
-int-cast pid and a 2-value-constrained prefix -- but documented as a
-pattern worth avoiding if this code is ever reused/refactored.
+teardown_hallucination's "Absolute Security Boundary Check" used to be a
+plain-string ``.startswith(self.mirage_dir)``, which treats a sibling such as
+"/mirage_env_EVIL" as inside "/mirage_env" (known issue #16). Not exploitable
+through the public API (target_path is built from an int-cast pid and a fixed
+prefix), but fixed anyway as defense in depth: the check is now
+``MirageProtocol._is_inside_mirage_dir()`` -- real path containment on
+resolved paths -- and the tests below cover the sibling-prefix, "..", root
+and escaping-symlink cases.
 """
 from __future__ import annotations
 
@@ -149,25 +149,49 @@ def test_teardown_seals_to_ledger_on_success(mirage, isolated_stamp):
     assert lines[-1]["action_type"] == "HALLUCINATION_TEARDOWN"
 
 
-def test_teardown_boundary_check_documented_prefix_weakness(mirage, monkeypatch):
+def test_boundary_check_rejects_string_prefix_sibling(mirage):
     """
-    Documents (does not exploit) the theoretical weakness in the boundary
-    check: it uses string .startswith() rather than proper path
-    containment (e.g. os.path.commonpath or checking for a path separator
-    after the prefix). Not reachable via the public API today since
-    target_path is always built from an int-cast pid and a 2-value prefix
-    -- but this test exists so the weakness is visible if the method is
-    ever refactored to accept more flexible input.
+    Known issue #16 (FIXED): the teardown boundary check used string
+    .startswith(), so a sibling such as ``<mirage_dir>_EVIL_SIBLING`` counted
+    as "inside" ``<mirage_dir>``. It now uses real path containment.
     """
     sibling_dir = mirage.mirage_dir + "_EVIL_SIBLING"
     os.makedirs(sibling_dir, exist_ok=True)
     try:
-        # Confirms the raw string-prefix relationship exists (the actual
-        # vulnerability precondition), even though teardown_hallucination's
-        # own path construction prevents reaching it via the public API.
+        # The raw string-prefix relationship that made the old check wrong:
         assert os.path.abspath(sibling_dir).startswith(mirage.mirage_dir)
+        # ...but it is no longer treated as inside the mirage directory.
+        assert not mirage._is_inside_mirage_dir(sibling_dir)
+        assert not mirage._is_inside_mirage_dir(
+            os.path.join(sibling_dir, "linux_target_1")
+        )
     finally:
         os.rmdir(sibling_dir)
+
+
+def test_boundary_check_accepts_real_children_only(mirage):
+    child = os.path.join(mirage.mirage_dir, "linux_target_42")
+    assert mirage._is_inside_mirage_dir(child)
+    assert mirage._is_inside_mirage_dir(os.path.join(child, "etc", "shadow"))
+    # The decoy root itself and its parent are never valid teardown targets.
+    assert not mirage._is_inside_mirage_dir(mirage.mirage_dir)
+    assert not mirage._is_inside_mirage_dir(os.path.dirname(mirage.mirage_dir))
+    # ".." traversal that resolves back out is rejected.
+    assert not mirage._is_inside_mirage_dir(
+        os.path.join(mirage.mirage_dir, "linux_target_42", "..", "..", "x")
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs privileges on Windows")
+def test_teardown_refuses_symlink_that_escapes_mirage_dir(mirage, tmp_path):
+    outside = tmp_path / "outside_secret"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("must survive")
+    link = os.path.join(mirage.mirage_dir, "linux_target_777")
+    os.symlink(outside, link)
+
+    assert mirage.teardown_hallucination(777, "LINUX") is False
+    assert (outside / "keep.txt").read_text() == "must survive"
 
 
 # --------------------------------------------------------------------------

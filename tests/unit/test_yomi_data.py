@@ -27,10 +27,9 @@ def test_validate_data_store_on_fresh_store_is_clean(yomi_data_env):
 
 def test_write_and_load_year_store_round_trip(yomi_data_env):
     # NOTE: entry value MUST include a "cve_id" field matching its own dict
-    # key -- _validate_year_file() enforces this on every read. See
-    # test_write_year_store_silently_drops_entries_missing_cve_id below for
-    # what happens when this invariant isn't met (it is NOT enforced on
-    # write, only on the next read/scan -- that asymmetry is a real bug).
+    # key. The invariant is enforced on write (write_year_store raises
+    # ValueError) and again on every read by _validate_year_file(); see
+    # test_write_year_store_rejects_entries_missing_cve_id below.
     entries = {"CVE-2026-0001": {"cve_id": "CVE-2026-0001", "cvss": 9.8, "desc": "test entry"}}
     yomi_data_env.write_year_store(2026, entries)
 
@@ -55,30 +54,49 @@ def test_manifest_repairs_when_year_files_drift(yomi_data_env):
     assert sorted(result["year_files"]) == [2025, 2026]
 
 
-def test_write_year_store_silently_drops_entries_missing_cve_id(yomi_data_env):
+def test_write_year_store_rejects_entries_missing_cve_id(yomi_data_env):
     """
-    KNOWN BUG (found via this test, not yet fixed in source):
-    `write_year_store()` performs zero shape validation -- it will happily
-    write an entry dict that doesn't carry a matching `cve_id` field. The
-    mismatch is only caught later, by `_validate_year_file()`, which is
-    invoked on *read* (`load_year_store`) or during a store *scan*
-    (`validate_data_store`). When it's caught, the entire year file is
-    quarantined and the caller silently gets back `{}` / a corrupt-file
-    entry -- with no exception raised at write time to say why.
-
-    This test exists to make that failure mode explicit and regression-safe:
-    if `write_year_store` is ever fixed to validate on write (the correct
-    fix), this test should start failing loudly and needs to be rewritten
-    to assert the new (safe) behavior instead.
+    Known issue #8 (FIXED): write_year_store() used to accept an entry with
+    no matching ``cve_id`` and write it, after which the next read/scan
+    quarantined the whole year file and silently returned {}. It now
+    validates before writing and raises ValueError instead.
     """
     malformed_entries = {"CVE-2026-9999": {"cvss": 5.0}}  # missing cve_id field
-    yomi_data_env.write_year_store(2026, malformed_entries)  # succeeds, no error
+    with pytest.raises(ValueError, match="cve_id"):
+        yomi_data_env.write_year_store(2026, malformed_entries)
 
-    loaded = yomi_data_env.load_year_store(2026)
-    assert loaded == {}  # <-- data silently vanished
-
+    # Nothing was written, so nothing can be silently quarantined later.
+    assert not (yomi_data_env.CVE_STORE_DIR / "2026.json").exists()
+    assert yomi_data_env.load_year_store(2026) == {}
     result = yomi_data_env.validate_data_store()
-    assert any("2026.json" in f for f in result["corrupt_year_files"])
+    assert result["corrupt_year_files"] == []
+
+
+@pytest.mark.parametrize(
+    "bad_store, message",
+    [
+        ({"CVE-2026-1": {"cve_id": "CVE-2026-2"}}, "cve_id"),  # key != cve_id
+        ({"CVE-2026-1": "not a dict"}, "must be a dict"),
+        ({1: {"cve_id": "1"}}, "must be a str"),
+        (["not", "a", "dict"], "must be a dict"),
+    ],
+)
+def test_write_year_store_rejects_other_malformed_shapes(
+    yomi_data_env, bad_store, message
+):
+    with pytest.raises(ValueError, match=message):
+        yomi_data_env.write_year_store(2026, bad_store)
+    assert not (yomi_data_env.CVE_STORE_DIR / "2026.json").exists()
+
+
+def test_rejected_write_leaves_existing_year_file_untouched(yomi_data_env):
+    good = {"CVE-2026-1": {"cve_id": "CVE-2026-1", "cvss": 7.5}}
+    yomi_data_env.write_year_store(2026, good)
+
+    with pytest.raises(ValueError):
+        yomi_data_env.write_year_store(2026, {"CVE-2026-2": {"cvss": 1.0}})
+
+    assert yomi_data_env.load_year_store(2026) == good
 
 
 def test_invalid_year_filename_is_flagged_not_crashed(yomi_data_env):
