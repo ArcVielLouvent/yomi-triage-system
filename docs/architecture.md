@@ -199,7 +199,7 @@ Beyond standard MCP wrappers, Yomi implements several deeply integrated, advance
 
 - **Ghost Protocol (`ghost.py`):** Deep OS Camouflage. Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., `[kworker/u4:2]`). Armed with an autonomous **Dead Man's Switch (Watchdog)** that seals a final cryptographic log if malware successfully issues a kill signal to the EDR.
 
-- **The OMNISCIENT Torii Gateway (`dashboard.py` v10.0):** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`. Hardened against Terminal Spoofing, Lock Starvation, and VFS I/O Lag.
+- **The OMNISCIENT Torii Gateway (`dashboard.py` v11.0):** A responsive, real-time, non-blocking Terminal UI (TUI) built with `rich`. Adapts its layout to the terminal size (compact 80x24 view, full telemetry from 90 columns), reads benchmark latency from the audit ledger, and builds the CVE library off the UI thread so it starts instantly on air-gapped hosts. Hardened against Terminal Spoofing, Lock Starvation, and VFS I/O Lag.
 
 ---
 

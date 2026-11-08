@@ -22,6 +22,8 @@ Yomi uses a centralized CLI entry point (`yomi_core/cli.py`) to manage its vario
 sudo python3 yomi_core/cli.py --auto
 ```
 
+The TUI adapts to the terminal it runs in. At 80x24 it shows a compact two-line summary above the activity stream; from 90 columns wide it adds the full telemetry panel (incident, sensors, host, intelligence); on terminals 44 rows or taller it also shows the large logo. The activity stream lists the most recent 60 ledger events at startup (with their original timestamps) and then follows new ones; routine per-cycle events are hidden. The headline status keeps a serious state (for example `CRITICAL`) for 30 seconds before a calmer event may replace it. Press `Ctrl+C` to exit.
+
 **2. Launch with Ghost Protocol (deep OS camouflage & dead man's switch):**
 
 Evades malware anti-analysis by masquerading the Yomi daemon as a standard OS process (e.g., `[kworker/u4:2]`). If malware attempts to kill Yomi, the armed watchdog intercepts the SIGTERM and seals a final cryptographic tamper-alert log before going down.
@@ -89,7 +91,7 @@ Two things the installer does that aren't obvious, both found by actually runnin
 - **`pip install .` fails outright on modern Debian/Ubuntu without a venv** (`externally-managed-environment`, PEP 668). The installer sidesteps this with an isolated venv rather than `--break-system-packages`, which would be a bad idea for a persistent daemon anyway (it can silently break other system Python tooling).
 - **The venv is created with `--system-site-packages`.** `bcc` (the Ring-0 eBPF toolchain `EBPF_SENSOR` needs) has to be installed via `apt` into the *system* Python -- [Section 1 of `docs/installation.md`](installation.md) is explicit that it should never be `pip install`ed. A fully-isolated venv would make `bcc` permanently unreachable even if you installed it correctly, silently breaking `EBPF_SENSOR` forever. `--system-site-packages` lets the venv see it.
 - **`pip install .` packages `yomi_data/` like any other Python module** (it has an `__init__.py`, so `setuptools` includes it same as `yomi_core`/`yomi_engine`). This has two consequences, tracked as [`docs/known_issues.md`](known_issues.md) #27 and #28:
-  - The evidence ledger, notary checkpoint, CVE store, and HMAC key for a `pip`-installed daemon end up inside `.venv/lib/python3.*/site-packages/yomi_data/`, **not** in your git checkout. The installer prints the exact resolved path at the end of a successful run -- treat that path as your chain-of-custody evidence store, and back it up accordingly.
+  - The evidence ledger, notary checkpoint, CVE store, and HMAC key for a `pip`-installed daemon end up inside `.venv/lib/python3.*/site-packages/yomi_data/`, **not** in your git checkout. The installer prints the exact resolved path at the end of a successful run -- treat that path as your chain-of-custody evidence store, and back it up accordingly. To choose the location yourself, set `YOMI_DATA_DIR` to an absolute path (for example in the systemd override from [2.5](#25-enabling-optional-modules-on-an-installed-daemon)) before the first run; every component reads it. See [`docs/installation.md`](installation.md).
   - If a dev/test `yomi_data/audit_hmac.key` already exists in your checkout when you run the installer, it gets copied into the "production" install too -- meaning a non-production key could end up signing your real evidence ledger. The installer detects this and requires you to explicitly type `y` to continue; anything else aborts. If you hit this and don't want to reuse the key, delete `yomi_data/audit_hmac.key` first and re-run.
 
 ### 2.5 Enabling optional modules on an installed daemon
@@ -230,14 +232,14 @@ The MITRE ATT&CK mapping table referenced by this flow now lives in [`docs/secur
 
 ## 5. Performance & Scalability Metrics
 
-Yomi executes forensic workflows magnitudes faster than human analysts. Below is raw, validated telemetry from `telemetry_benchmarks.jsonl` demonstrating consistent ~3.002-second latency from detection to containment logic.
+Yomi executes forensic workflows magnitudes faster than human analysts. Each incident's benchmark is sealed into the audit ledger as a `BENCHMARK_RECORDED` entry (and shown live in the TUI's Latency and Speed rows). Below is the `metadata` of such an entry, demonstrating consistent ~3.002-second latency from detection to containment logic.
 
 ```json
 {
     "incident_id": "INCIDENT_PID_0_1780238736",
     "action": "ESCALATED_TO_SHADOW_NET",
     "latency_seconds": 3.0025,
-    "human_speed_multiplier": "399.7x Faster",
+    "human_speed_multiplier": "399.7x",
     "sub_60s_containment": true
 }
 ```

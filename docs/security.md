@@ -50,7 +50,7 @@ Unlike typical LLM agent wrappers, Yomi's MCP Vault was engineered to survive ho
 
 - **Context Exhaustion Protection (Context Shield):** When tools like `strings_grep` output gigabytes of text, the SIFT Toolkit buffers via non-blocking OS pipes (`fcntl.O_NONBLOCK`) and strictly truncates output at 100,000 characters (100KB). This ensures local, air-gapped LLMs never crash from context window blowout.
 
-- **Evidence Spoliation & Binary Integrity:** Tools are rigidly mapped to `READ_VAULTS` and `WRITE_VAULTS` utilizing absolute structural boundary checks (`os.path.commonpath`). Raw artifact extractions (like TSK `icat`) are strictly written in write-binary (`wb`) mode, so the structural integrity and exact cryptographic hashes of recovered malware are preserved without UTF-8 corruption. *(Note: `READ_VAULTS`/`WRITE_VAULTS` are currently hardcoded absolute path prefixes rather than derived from `yomi_data`'s actual location -- tracked as a portability gap in [`docs/known_issues.md`](known_issues.md) #10.)*
+- **Evidence Spoliation & Binary Integrity:** Tools are rigidly mapped to `READ_VAULTS` and `WRITE_VAULTS` utilizing absolute structural boundary checks (`os.path.commonpath`). Raw artifact extractions (like TSK `icat`) are strictly written in write-binary (`wb`) mode, so the structural integrity and exact cryptographic hashes of recovered malware are preserved without UTF-8 corruption. *(Note: the built-in vault lists are fixed absolute prefixes. An operator can add roots with `YOMI_MCP_READ_VAULTS` / `YOMI_MCP_WRITE_VAULTS`; they only add, entries must be absolute and `/` is refused, and the data directory is deliberately not added automatically because it holds the audit HMAC key. See [`docs/installation.md`](installation.md) and [`docs/known_issues.md`](known_issues.md) #10.)*
 
 - **Ghost Process Evasion & Bitness Mismatch:** Malware often terminates rapidly to force EDRs to target recycled PIDs (Ghost Processes). Yomi's `os_bridge.py` eliminates TOCTOU gaps by relying purely on atomic OS exception handling (`ProcessLookupError`) instead of user-space polling.
 
@@ -111,10 +111,11 @@ Many legacy C-based forensic binaries have rigid operational constraints that cr
 
 ### 3.6 Terminal Interface Resilience Framework (The OMNISCIENT Shield)
 
-The `dashboard.py` (v10.0) Terminal UI is engineered to survive adversarial environments:
-- **Lock Splitting & Asynchronous Rendering:** Eliminates lock-starvation DoS. Heavy log ingestion runs on decoupled background threads, so the UI renders at 60fps even under a barrage of 10,000 logs/sec.
+The `dashboard.py` (v11.0) Terminal UI is engineered to survive adversarial environments:
+- **Lock Splitting & Asynchronous Rendering:** Eliminates lock-starvation DoS. Log ingestion and metric collection use separate locks and background threads, so the UI keeps refreshing (4 times per second) while events arrive faster than they can be read.
 - **Terminal Spoofing Immunity:** Autonomous sanitization of `\r`, `\b`, and Unicode directional overrides (`\u202E`) prevents malware from manipulating ANSI escape codes to hide "CRITICAL" alerts behind fake "SUCCESS" messages.
 - **Pre-Truncation ReDoS Barrier:** Log strings are hard-capped at 2,000 characters *before* entering the regex ANSI scrubber, preventing regular expression denial of service (ReDoS) CPU spikes.
+- **Output Isolation:** `print()`/stderr output from engine threads is discarded for the lifetime of the TUI, so it cannot overwrite the screen or spoof its contents. Everything the UI shows comes from the audit ledger, which already records those events.
 - **Zero-Overhead VFS Polling:** The TUI only polls the filesystem when `os.stat().st_size` changes, avoiding the redundant disk I/O bottleneck common in traditional log tailers.
 
 ### 3.7 Systemd Graceful Termination & Atomic Rollback
