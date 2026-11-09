@@ -313,7 +313,14 @@ def _run_sentinel_daemon(audit: ImmutableStamp) -> SentinelDaemon:
     return sentinel
 
 
-def _get_new_ledger_logs(last_hash: str) -> list[dict]:
+def _get_new_ledger_logs(last_hash: str, backfill: int = 1) -> list[dict]:
+    """Ledger entries newer than `last_hash`.
+
+    With no usable `last_hash` (first call, or the hash is no longer in the
+    ledger) the most recent `backfill` entries are returned instead, so a
+    freshly started UI can show recent history rather than a single line.
+    """
+    backfill = max(1, backfill)
     ledger_path = Path(validate_data_store()["ledger_file"])
     if not ledger_path.exists():
         return []
@@ -329,12 +336,12 @@ def _get_new_ledger_logs(last_hash: str) -> list[dict]:
                 continue
 
         if not last_hash:
-            return [entries[-1]] if entries else []
+            return entries[-backfill:]
 
         for i, entry in enumerate(entries):
             if entry.get("hash") == last_hash:
                 return entries[i + 1 :]
-        return [entries[-1]] if entries else []
+        return entries[-backfill:]
     except Exception:
         return []
 
@@ -376,6 +383,36 @@ def _run_console_loop(audit: ImmutableStamp, ledger_file: str) -> None:
         _global_shutdown_event.wait(1.0)
 
 
+@contextlib.contextmanager
+def _quiet_stdio():
+    """Keeps stray print()/stderr output from engine threads off the TUI.
+
+    Engine modules print status lines from background threads. Left alone,
+    each one lands in the middle of the alternate screen and the layout
+    visibly jumps until the next redraw. Everything the UI needs is already in
+    the ledger, so the output is discarded for the lifetime of the UI. The
+    dashboard's own console writes to the original stdout and is unaffected.
+    """
+    sink = open(os.devnull, "w", encoding="utf-8")
+    saved = (sys.stdout, sys.stderr)
+    sys.stdout = sys.stderr = sink
+    try:
+        yield
+    finally:
+        sys.stdout, sys.stderr = saved
+        sink.close()
+
+
+def _ledger_event_time(entry: dict):
+    """Local datetime of a ledger entry, or None if it has no usable stamp."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(entry["timestamp_utc"]).astimezone()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
     if Live is None:
         logger.warning("Rich runtime is unavailable. Using fallback console gateway.")
@@ -383,7 +420,11 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
         return
 
     try:
-        from yomi_core.dashboard import YomiDashboard
+        from yomi_core.dashboard import (
+            YomiDashboard,
+            classify_event,
+            should_display_event,
+        )
     except ImportError as exc:
         logger.warning(
             "Dashboard UI module unavailable (%s); falling back to console gateway.",
@@ -399,16 +440,24 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
         return
 
     _record_audit_event(audit, "UI_START", "Launching dashboard UI gateway.")
-    tui = YomiDashboard()
+    # lazy_library: build the CVE library off the UI thread so the first frame
+    # appears immediately, even on an air-gapped host where its network probe
+    # has to time out.
+    tui = YomiDashboard(lazy_library=True)
     last_hash = ""
     last_ledger_size = -1
+    first_pass = True
     ledger_path = Path(ledger_file)
 
     try:
-        with Live(
-            tui.render_layout(), refresh_per_second=4, screen=True, console=tui.console
-        ) as live:
-            live.update(tui.render_layout())
+        with _quiet_stdio(), Live(
+            get_renderable=tui.render_layout,
+            refresh_per_second=4,
+            screen=True,
+            console=tui.console,
+            redirect_stdout=False,
+            redirect_stderr=False,
+        ):
             while not _global_shutdown_event.is_set():
                 if ledger_path.exists():
                     try:
@@ -416,62 +465,31 @@ def _run_tui_loop(audit: ImmutableStamp, ledger_file: str) -> None:
                         # Prevents non-atomic file reads from freezing the UI thread under high disk pressure
                         current_size = ledger_path.stat().st_size
                         if current_size != last_ledger_size:
-                            new_entries = _get_new_ledger_logs(last_hash)
+                            new_entries = _get_new_ledger_logs(
+                                last_hash, backfill=60 if first_pass else 1
+                            )
+                            first_pass = False
                             last_ledger_size = current_size
 
                             for latest_entry in new_entries:
                                 current_hash = latest_entry.get("hash", "")
-                                if current_hash and current_hash != last_hash:
-                                    last_hash = current_hash
-                                    action_name = latest_entry.get(
-                                        "action_type", "SYSTEM_UPDATE"
-                                    )
+                                if not current_hash or current_hash == last_hash:
+                                    continue
+                                last_hash = current_hash
+                                agent = latest_entry.get("agent", "")
+                                action_name = latest_entry.get(
+                                    "action_type", "SYSTEM_UPDATE"
+                                )
+                                if not should_display_event(agent, action_name):
+                                    continue
 
-                                    spam_actions = [
-                                        "TRIAGE_ITERATION",
-                                        "MAX_ITERATIONS_REACHED",
-                                        "BENCHMARK_RECORDED",
-                                        "DEPLOYED",
-                                        "MAPPED",
-                                        "STARTUP",
-                                        "INITIALIZATION",
-                                        "UI_START",
-                                        "SENTINEL_INIT",
-                                        "LEDGER_VERIFICATION",
-                                    ]
-                                    if action_name in spam_actions:
-                                        continue
-
-                                    description = latest_entry.get("description", "")
-
-                                    status = "SAFE"
-                                    if any(
-                                        k in action_name
-                                        for k in [
-                                            "FREEZE",
-                                            "THREAT",
-                                            "CONTAINMENT",
-                                            "FAILED",
-                                        ]
-                                    ):
-                                        status = "CRITICAL"
-                                    elif "CRITICAL" in description.upper():
-                                        status = "CRITICAL"
-                                    elif (
-                                        "SHADOW" in action_name
-                                        or "MIRAGE" in description
-                                    ):
-                                        status = "DECEPTION"
-                                    elif (
-                                        "DOUBT" in action_name
-                                        or "ANOMALY" in action_name
-                                    ):
-                                        status = "WARNING"
-
-                                    tui.update_state(
-                                        status, "AUTO", f"[{action_name}] {description}"
-                                    )
-                                    live.update(tui.render_layout())
+                                description = latest_entry.get("description", "")
+                                tui.update_state(
+                                    classify_event(action_name, description, agent),
+                                    None,
+                                    f"[{action_name}] {description}",
+                                    when=_ledger_event_time(latest_entry),
+                                )
                     except Exception:
                         pass
                 _global_shutdown_event.wait(0.5)

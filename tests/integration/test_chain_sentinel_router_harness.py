@@ -107,7 +107,21 @@ def test_critical_threat_chain_freezes_real_process_end_to_end(sentinel, isolate
     # mainstream Linux distribution -- making this assertion actually
     # portable instead of environment-dependent.
     sleep_bin = shutil.which("sleep") or "/bin/sleep"
+    # The harness hard-blocks PIDs <= 100 as core OS processes. A freshly
+    # wrapped PID counter (containers, new PID namespaces) can hand out such a
+    # PID, which would make this test fail for a reason unrelated to what it
+    # checks, so spawn throwaway children until the target's PID is above it.
     proc = subprocess.Popen([sleep_bin, "10"])
+    for _ in range(300):
+        if proc.pid > 100:
+            break
+        proc.kill()
+        proc.wait()
+        proc = subprocess.Popen([sleep_bin, "10"])
+    else:
+        proc.kill()
+        proc.wait()
+        pytest.skip("could not obtain a target PID above the protected range (<= 100)")
     try:
         time.sleep(0.2)
         target_pid = proc.pid
