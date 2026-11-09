@@ -27,6 +27,26 @@ LINUX_ONLY = pytest.mark.skipif(
 )
 
 
+RESERVED_PID_LIMIT = 100  # os_bridge/harness refuse PIDs at or below this
+
+
+def _spawn_above_reserved_pids(args):
+    """Popen(args), retrying until the child's PID is above the protected range.
+
+    A container whose PID counter has just wrapped (or a fresh PID namespace)
+    can hand out PIDs <= 100, which os_bridge refuses by design -- that would
+    make the tests below fail for a reason unrelated to what they check.
+    Throwaway children are reaped; skips if no suitable PID can be obtained.
+    """
+    for _ in range(300):
+        proc = subprocess.Popen(args)
+        if proc.pid > RESERVED_PID_LIMIT:
+            return proc
+        proc.kill()
+        proc.wait()
+    pytest.skip(f"could not obtain a child PID above {RESERVED_PID_LIMIT}")
+
+
 @pytest.fixture
 def bridge_no_tools(monkeypatch):
     """OSBridge with every external tool reporting as unavailable."""
@@ -81,7 +101,7 @@ def test_get_tool_path_unknown_tool_returns_empty(bridge_no_tools):
 
 @LINUX_ONLY
 def test_cryogenic_freeze_and_thaw_real_process(bridge_no_tools):
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+    proc = _spawn_above_reserved_pids([sys.executable, "-c", "import time; time.sleep(5)"])
     try:
         time.sleep(0.2)  # let it actually start
 
@@ -125,6 +145,12 @@ def test_cryogenic_freeze_refuses_illegal_pid(bridge_no_tools):
 
 @LINUX_ONLY
 def test_cryogenic_freeze_refuses_self(bridge_no_tools):
+    if os.getpid() <= 100:
+        # PIDs <= 100 are blocked as "core OS/Kernel" before the self check is
+        # reached, so with such a PID this test would assert on the wrong
+        # branch. Happens when a container's PID counter has just wrapped or
+        # in a fresh PID namespace; the self-protection itself is unaffected.
+        pytest.skip(f"test process PID {os.getpid()} is <= 100 (reserved range)")
     result = bridge_no_tools.cryogenic_freeze(os.getpid())
     assert result["status"] == "ERROR"
     assert "current or parent process" in result["reason"]
@@ -133,7 +159,7 @@ def test_cryogenic_freeze_refuses_self(bridge_no_tools):
 @LINUX_ONLY
 def test_freeze_dead_pid_reports_ghost_process(bridge_no_tools):
     # Spawn, let it exit immediately, then try to freeze the now-dead PID.
-    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc = _spawn_above_reserved_pids([sys.executable, "-c", "pass"])
     dead_pid = proc.pid
     proc.wait(timeout=5)
     result = bridge_no_tools.cryogenic_freeze(dead_pid)
